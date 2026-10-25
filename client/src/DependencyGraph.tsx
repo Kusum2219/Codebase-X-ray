@@ -23,11 +23,12 @@ export type GraphFile = {
 type FileNodeData = {
   file: GraphFile;
   selected: boolean;
+  connected: boolean;
   onSelect: (path: string) => void;
 };
 
 function FileNode({ data }: NodeProps<Node<FileNodeData>>) {
-  const { file, selected, onSelect } = data;
+  const { file, selected, connected, onSelect } = data;
 
   return (
     <div
@@ -35,7 +36,9 @@ function FileNode({ data }: NodeProps<Node<FileNodeData>>) {
       className={`min-w-[190px] max-w-[230px] cursor-pointer rounded-xl border p-3 shadow-lg transition ${
         selected
           ? "border-emerald-400 bg-[#163027] shadow-emerald-950/30"
-          : "border-white/10 bg-[#171a20] hover:border-emerald-400/50"
+          : connected
+            ? "border-sky-400/70 bg-[#14232c] shadow-sky-950/30"
+            : "border-white/10 bg-[#171a20] opacity-60 hover:border-emerald-400/50"
       }`}
     >
       <Handle
@@ -45,7 +48,10 @@ function FileNode({ data }: NodeProps<Node<FileNodeData>>) {
       />
 
       <div className="flex items-start gap-2">
-        <FileCode2 size={16} className="mt-0.5 shrink-0 text-emerald-300" />
+        <FileCode2
+          size={16}
+          className="mt-0.5 shrink-0 text-emerald-300"
+        />
         <div className="min-w-0">
           <p className="break-all text-xs font-semibold text-gray-100">
             {file.path.split("/").pop()}
@@ -89,6 +95,27 @@ export default function DependencyGraph({
   const { nodes, edges } = useMemo(() => {
     const columns = Math.max(1, Math.ceil(Math.sqrt(files.length)));
 
+    // Find the selected file and its direct connections first.
+    const connectedPaths = new Set<string>();
+
+    if (selectedFilePath) {
+      connectedPaths.add(selectedFilePath);
+
+      const selectedFile = files.find(
+        (file) => file.path === selectedFilePath,
+      );
+
+      selectedFile?.localDependencies.forEach((path) => {
+        connectedPaths.add(path);
+      });
+
+      files.forEach((file) => {
+        if (file.localDependencies.includes(selectedFilePath)) {
+          connectedPaths.add(file.path);
+        }
+      });
+    }
+
     const graphNodes: Node<FileNodeData>[] = files.map((file, index) => ({
       id: file.path,
       type: "fileNode",
@@ -99,6 +126,7 @@ export default function DependencyGraph({
       data: {
         file,
         selected: file.path === selectedFilePath,
+        connected: connectedPaths.has(file.path),
         onSelect: onSelectFile,
       },
     }));
@@ -115,16 +143,20 @@ export default function DependencyGraph({
         if (seenEdges.has(edgeId)) continue;
         seenEdges.add(edgeId);
 
+        const isConnected =
+          connectedPaths.has(file.path) &&
+          connectedPaths.has(dependency);
+
         graphEdges.push({
           id: edgeId,
           source: file.path,
           target: dependency,
           type: "smoothstep",
-          animated: file.path === selectedFilePath,
+          animated: isConnected && selectedFilePath !== null,
           style: {
-            stroke:
-              file.path === selectedFilePath ? "#34d399" : "#64748b",
-            strokeWidth: file.path === selectedFilePath ? 2 : 1.4,
+            stroke: isConnected ? "#34d399" : "#374151",
+            strokeWidth: isConnected ? 2.5 : 1,
+            opacity: isConnected ? 1 : 0.3,
           },
         });
       }
