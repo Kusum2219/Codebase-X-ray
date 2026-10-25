@@ -27,6 +27,7 @@ import {
   LoaderCircle,
 } from "lucide-react";
 import api from "./api";
+import DependencyGraph from "./DependencyGraph";
 
 type ApiState = "connecting" | "connected" | "error";
 
@@ -552,6 +553,7 @@ const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
             </section>
 
             
+
 {/* Dependency graph preview */}
 <section className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#111419]">
   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] px-5 py-4">
@@ -563,151 +565,118 @@ const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
         </h2>
       </div>
       <p className="mt-1 text-xs text-gray-500">
-        Real file relationships from your latest scan
+        Interactive map of your scanned source files
       </p>
     </div>
 
     <span className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[11px] text-gray-400">
-      {scanResult ? "Scan complete" : "Waiting for scan"}
+      {scanResult ? `${scanResult.sourceFiles.length} nodes` : "Waiting for scan"}
     </span>
   </div>
 
   {!scanResult ? (
-    <div className="flex min-h-[220px] flex-col items-center justify-center p-6 text-center">
-      <Network size={30} className="mb-3 text-gray-600" />
-      <p className="text-sm font-medium text-gray-300">
-        No dependency data yet
-      </p>
-      <p className="mt-2 max-w-sm text-xs text-gray-500">
-        Scan a codebase above to explore its source files and local dependencies.
-      </p>
+    <div className="flex min-h-[220px] items-center justify-center p-6 text-center text-sm text-gray-500">
+      Scan a codebase to generate its dependency graph.
     </div>
   ) : (
-    <div className="grid gap-5 p-5 lg:grid-cols-[1fr_1fr]">
-      <div className="min-w-0">
-        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">
-          Source files ({scanResult.sourceFiles.length})
-        </p>
-
-        <div className="max-h-[340px] space-y-2 overflow-y-auto pr-1">
-          {scanResult.sourceFiles.map((file) => (
-            <button
-              key={file.path}
-              type="button"
-              onClick={() =>
-                setSelectedFilePath(
-                  selectedFilePath === file.path ? null : file.path
-                )
-              }
-              className={`w-full rounded-lg border p-3 text-left transition ${
-                selectedFilePath === file.path
-                  ? "border-emerald-400/40 bg-emerald-400/[0.08]"
-                  : "border-white/[0.07] bg-[#171a20] hover:border-white/20"
-              }`}
-            >
-              <div className="flex items-start gap-2">
-                <FileCode2
-                  size={16}
-                  className="mt-0.5 shrink-0 text-blue-300"
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="break-all text-xs font-medium text-gray-200">
-                    {file.path}
-                  </p>
-                  <p className="mt-1 text-[11px] text-gray-500">
-                    {file.imports.length} imports ·{" "}
-                    {file.localDependencies.length} local dependencies
-                  </p>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="min-w-0 rounded-lg border border-white/[0.07] bg-[#0d1014] p-4">
-        <p className="text-xs font-medium uppercase tracking-wider text-gray-500">
-          Relationship details
-        </p>
-
-        {!selectedFilePath ? (
-          <p className="mt-4 text-sm text-gray-500">
-            Select a source file to inspect its dependencies.
-          </p>
-        ) : (
-          (() => {
-            const selectedFile = scanResult.sourceFiles.find(
-              (file) => file.path === selectedFilePath
-            );
-
-            if (!selectedFile) return null;
-
-            return (
-              <div className="mt-4 space-y-4">
-                <div>
-                  <p className="break-all text-sm font-medium text-emerald-200">
-                    {selectedFile.path}
-                  </p>
-                  <p className="mt-1 text-xs text-gray-500">
-                    Extension: {selectedFile.extension || "unknown"}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="mb-2 text-xs font-medium text-gray-300">
-                    Local dependencies
-                  </p>
-                  {selectedFile.localDependencies.length === 0 ? (
-                    <p className="text-xs text-gray-500">
-                      No local dependencies detected.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {selectedFile.localDependencies.map((dependency) => (
-                        <div
-                          key={dependency}
-                          className="break-all rounded-md border border-violet-400/20 bg-violet-400/[0.06] px-3 py-2 text-xs text-violet-200"
-                        >
-                          <GitBranch
-                            size={13}
-                            className="mr-2 inline"
-                          />
-                          {dependency}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <p className="mb-2 text-xs font-medium text-gray-300">
-                    Imported modules
-                  </p>
-                  {selectedFile.imports.length === 0 ? (
-                    <p className="text-xs text-gray-500">
-                      No imports detected.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {selectedFile.imports.map((item) => (
-                        <p
-                          key={item}
-                          className="break-all rounded-md bg-white/[0.03] px-3 py-2 text-xs text-gray-400"
-                        >
-                          {item}
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })()
-        )}
-      </div>
+    <div className="p-4">
+      <DependencyGraph
+        files={scanResult.sourceFiles}
+        selectedFilePath={selectedFilePath}
+        onSelectFile={setSelectedFilePath}
+      />
+      <p className="mt-3 text-xs text-gray-500">
+        Select a node to inspect a file. Drag nodes to arrange them, scroll to zoom, and use the controls to navigate.
+      </p>
     </div>
   )}
 </section>
+{/* Selected file details */}
+<section className="rounded-xl border border-white/[0.08] bg-[#111419] p-5">
+  <div className="mb-4">
+    <h2 className="text-sm font-semibold text-white">
+      Selected File Details
+    </h2>
+    <p className="mt-1 text-xs text-gray-500">
+      Inspect imports and dependencies for the selected node.
+    </p>
+  </div>
+
+  {(() => {
+    const selectedFile = scanResult?.sourceFiles.find(
+      (file) => file.path === selectedFilePath,
+    );
+
+    if (!selectedFile) {
+      return (
+        <p className="text-sm text-gray-500">
+          Click a node in the dependency graph to inspect its details.
+        </p>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        <div>
+          <p className="mb-1 text-xs text-gray-500">File path</p>
+          <p className="break-all text-sm text-emerald-300">
+            {selectedFile.path}
+          </p>
+        </div>
+
+        <div>
+          <p className="mb-1 text-xs text-gray-500">Extension</p>
+          <span className="rounded-md bg-white/[0.06] px-2 py-1 text-xs text-gray-200">
+            {selectedFile.extension}
+          </span>
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs text-gray-500">
+            Imported modules ({selectedFile.imports.length})
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {selectedFile.imports.length > 0 ? (
+              selectedFile.imports.map((item) => (
+                <span
+                  key={item}
+                  className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-1 text-xs text-gray-300"
+                >
+                  {item}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-gray-500">No imports found</span>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs text-gray-500">
+            Local dependencies ({selectedFile.localDependencies.length})
+          </p>
+          <div className="space-y-2">
+            {selectedFile.localDependencies.length > 0 ? (
+              selectedFile.localDependencies.map((item) => (
+                <div
+                  key={item}
+                  className="rounded-lg border border-emerald-400/10 bg-emerald-400/[0.04] px-3 py-2 text-xs text-emerald-200"
+                >
+                  {item}
+                </div>
+              ))
+            ) : (
+              <span className="text-xs text-gray-500">
+                No local dependencies found
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  })()}
+</section>
+
 
 
             {/* Codebases and workspace files */}
