@@ -36,6 +36,14 @@ const ignoredFolders = [
   "**/.next/**",
 ];
 
+type ScannedFile = {
+  path: string;
+  extension: string;
+  imports: string[];
+  localDependencies: string[];
+  skipped?: string;
+};
+
 function extractImports(content: string): string[] {
   const imports = new Set<string>();
 
@@ -48,16 +56,78 @@ function extractImports(content: string): string[] {
 
   for (const pattern of patterns) {
     for (const match of content.matchAll(pattern)) {
-      if (match[1]) imports.add(match[1]);
+      if (match[1]) {
+        imports.add(match[1]);
+      }
     }
   }
 
   return [...imports];
 }
+function findCircularDependencies(
+  files: ScannedFile[],
+): string[][] {
+  const filePaths = new Set(files.map((file) => file.path));
 
+  const graph = new Map<string, string[]>();
+
+  for (const file of files) {
+    graph.set(
+      file.path,
+      file.localDependencies.filter((dependency) =>
+        filePaths.has(dependency),
+      ),
+    );
+  }
+
+  const state = new Map<string, number>();
+  const stack: string[] = [];
+  const cycles = new Map<string, string[]>();
+
+  function visit(filePath: string): void {
+    state.set(filePath, 1);
+    stack.push(filePath);
+
+    for (const dependency of graph.get(filePath) ?? []) {
+      const dependencyState = state.get(dependency) ?? 0;
+
+      if (dependencyState === 0) {
+        visit(dependency);
+      } else if (dependencyState === 1) {
+        const cycleStart = stack.indexOf(dependency);
+
+        if (cycleStart !== -1) {
+          const cycle = stack.slice(cycleStart);
+          const rotations = cycle.map((_, index) =>
+            [
+              ...cycle.slice(index),
+              ...cycle.slice(0, index),
+            ].join(" -> "),
+          );
+
+          const key = rotations.sort()[0];
+
+          if (key !== undefined) {
+            cycles.set(key, [...cycle, dependency]);
+          }
+        }
+      }
+    }
+
+    stack.pop();
+    state.set(filePath, 2);
+  }
+
+  for (const filePath of graph.keys()) {
+    if ((state.get(filePath) ?? 0) === 0) {
+      visit(filePath);
+    }
+  }
+
+  return [...cycles.values()];
+}
 async function scanDirectory(directory: string) {
   const root = path.resolve(directory);
-
   const directoryInfo = await stat(root);
 
   if (!directoryInfo.isDirectory()) {
@@ -79,18 +149,17 @@ async function scanDirectory(directory: string) {
 
   const sourceFileSet = new Set(sourceFiles);
 
-  const files = await Promise.all(
-    sourceFiles.map(async (file) => {
+  const files: ScannedFile[] = await Promise.all(
+    sourceFiles.map(async (file): Promise<ScannedFile> => {
       const absolutePath = path.join(root, file);
       const fileInfo = await stat(absolutePath);
 
-      // Skip unusually large files to keep scans lightweight.
       if (fileInfo.size > 500_000) {
         return {
           path: file,
           extension: path.extname(file),
-          imports: [] as string[],
-          localDependencies: [] as string[],
+          imports: [],
+          localDependencies: [],
           skipped: "File exceeds 500 KB",
         };
       }
@@ -113,7 +182,9 @@ async function scanDirectory(directory: string) {
             ),
           ];
 
-          return candidates.filter((candidate) => sourceFileSet.has(candidate));
+          return candidates.filter((candidate) =>
+            sourceFileSet.has(candidate),
+          );
         });
 
       return {
@@ -126,9 +197,13 @@ async function scanDirectory(directory: string) {
   );
 
   const dependencyCount = files.reduce(
-    (total, file) => total + file.localDependencies.length,
+    (total, file) =>
+      total + file.localDependencies.length,
     0,
   );
+
+  const circularDependencies =
+    findCircularDependencies(files);
 
   return {
     root,
@@ -136,6 +211,8 @@ async function scanDirectory(directory: string) {
     analyzedFiles: files.length,
     sourceFiles: files,
     dependencyCount,
+    circularDependencies,
+    circularDependencyCount: circularDependencies.length,
   };
 }
 
@@ -162,7 +239,9 @@ app.post("/api/scan", async (req, res) => {
     });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Unable to scan this directory";
+      error instanceof Error
+        ? error.message
+        : "Unable to scan this directory";
 
     res.status(400).json({
       success: false,
@@ -172,5 +251,7 @@ app.post("/api/scan", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Codebase X-Ray API running at http://localhost:${PORT}`);
+  console.log(
+    `Codebase X-Ray API running at http://localhost:${PORT}`,
+  );
 });

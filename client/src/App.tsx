@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
@@ -27,6 +26,8 @@ import {
   LoaderCircle,
   Filter,
   X,
+  FileWarning,
+  
 } from "lucide-react";
 import api from "./api";
 import DependencyGraph from "./DependencyGraph";
@@ -49,35 +50,24 @@ type ScanResult = {
   totalFiles: number;
   analyzedFiles: number;
   dependencyCount: number;
+  circularDependencies: string[][];
+  circularDependencyCount: number;
   sourceFiles: ScannedFile[];
 };
 
-const recentProjects = [
-  {
-    name: "Codebase X-Ray",
-    path: "codebase-x-ray",
-    language: "TypeScript",
-    status: "Ready to scan",
-    color: "text-blue-400",
-    dot: "bg-blue-400",
-  },
-  {
-    name: "LocalFix",
-    path: "local-services-marketplace",
-    language: "TypeScript",
-    status: "Not scanned",
-    color: "text-emerald-400",
-    dot: "bg-emerald-400",
-  },
-  {
-    name: "Heart Disease Prediction",
-    path: "heart-disease",
-    language: "Python",
-    status: "Not scanned",
-    color: "text-violet-400",
-    dot: "bg-violet-400",
-  },
-];
+
+type RecentProject = {
+  name: string;
+  path: string;
+  language: string;
+  status: string;
+  color: string;
+  dot: string;
+  lastScanned: string;
+  analyzedFiles: number;
+  dependencyCount: number;
+};
+
 
 const workspaceFiles = [
   { name: "App.tsx", type: "TSX", color: "text-blue-400" },
@@ -126,6 +116,8 @@ function App() {
   const [scanError, setScanError] = useState("");
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
+
 
   useEffect(() => {
     let active = true;
@@ -152,6 +144,20 @@ function App() {
     };
   }, []);
 
+  
+useEffect(() => {
+  try {
+    const savedProjects = localStorage.getItem("codebase-xray-history");
+
+    if (savedProjects) {
+      setRecentProjects(JSON.parse(savedProjects) as RecentProject[]);
+    }
+  } catch (error) {
+    console.error("Unable to load scan history:", error);
+  }
+}, []);
+
+
   async function handleScan() {
     if (!scanPath.trim()) {
       setScanError("Please enter a project folder path.");
@@ -170,8 +176,61 @@ function App() {
         path: scanPath.trim(),
       });
 
-      const result = response.data as ScanResult;
-      setScanResult(result);
+      
+const result = response.data as ScanResult;
+setScanResult(result);
+
+if (result.success) {
+  const normalizedPath = result.root.replace(/[\\/]+$/, "").toLowerCase();
+
+  const projectName =
+    normalizedPath.split(/[\\/]/).filter(Boolean).pop() || result.root;
+
+  const extensionList = [
+    ...new Set(
+      result.sourceFiles
+        .filter((file) => !file.skipped)
+        .map((file) => file.extension.toLowerCase()),
+    ),
+  ];
+
+  const language =
+    extensionList.some((ext) => [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"].includes(ext))
+      ? "JavaScript / TypeScript"
+      : extensionList.join(", ") || "Unknown";
+
+  const project: RecentProject = {
+    name: projectName,
+    path: result.root,
+    language,
+    status: "Scanned",
+    color: "text-blue-400",
+    dot: "bg-emerald-400",
+    lastScanned: new Date().toLocaleString(),
+    analyzedFiles: result.analyzedFiles,
+    dependencyCount: result.dependencyCount,
+  };
+
+  setRecentProjects((previous) => {
+    const updated = [
+      project,
+      ...previous.filter(
+        (item) => item.path.toLowerCase() !== normalizedPath,
+      ),
+    ].slice(0, 10);
+
+    try {
+      localStorage.setItem(
+        "codebase-xray-history",
+        JSON.stringify(updated),
+      );
+    } catch (error) {
+      console.error("Unable to save scan history:", error);
+    }
+
+    return updated;
+  });
+}
 
       if (!result.success && !result.sourceFiles) {
         setScanError("The scanner returned an unexpected response.");
@@ -247,6 +306,42 @@ function App() {
   const selectedFile = scanResult?.sourceFiles.find(
     (file) => file.path === selectedFilePath,
   );
+
+  
+const dependencyHotspots = useMemo(() => {
+  if (!scanResult) return [];
+
+  return scanResult.sourceFiles
+    .filter((file) => !file.skipped)
+    .map((file) => ({
+      ...file,
+      dependentCount: scanResult.sourceFiles.filter(
+        (otherFile) =>
+          !otherFile.skipped &&
+          otherFile.localDependencies.includes(file.path),
+      ).length,
+    }))
+    .filter((file) => file.dependentCount > 0)
+    .sort((a, b) => b.dependentCount - a.dependentCount)
+    .slice(0, 5);
+}, [scanResult]);
+
+
+const orphanFiles = useMemo(() => {
+  if (!scanResult) return [];
+
+  const importedPaths = new Set(
+    scanResult.sourceFiles.flatMap(
+      (file) => file.localDependencies
+    ),
+  );
+
+  return scanResult.sourceFiles.filter(
+    (file) =>
+      !file.skipped &&
+      !importedPaths.has(file.path),
+  );
+}, [scanResult]);
 
   function selectFile(path: string) {
     setSelectedFilePath(path);
@@ -555,7 +650,7 @@ function App() {
               )}
 
               {scanResult && (
-                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-lg border border-white/[0.08] p-4">
                     <p className="text-xs text-gray-500">Total files found</p>
                     <p className="mt-2 text-2xl font-semibold text-white">
@@ -573,6 +668,25 @@ function App() {
                     <p className="mt-2 text-2xl font-semibold text-white">
                       {scanResult.dependencyCount}
                     </p>
+                    <div className="rounded-lg border border-white/[0.08] p-4">
+  <p className="text-xs text-gray-500">Circular dependencies</p>
+
+  <p
+    className={`mt-2 text-2xl font-semibold ${
+      scanResult.circularDependencyCount > 0
+        ? "text-red-400"
+        : "text-emerald-300"
+    }`}
+  >
+    {scanResult.circularDependencyCount}
+  </p>
+
+  <p className="mt-1 text-xs text-gray-500">
+    {scanResult.circularDependencyCount > 0
+      ? "Dependency cycles detected"
+      : "No cycles detected"}
+  </p>
+</div>
                   </div>
                 </div>
               )}
@@ -890,10 +1004,20 @@ function App() {
                 </div>
                 <div className="divide-y divide-white/[0.06]">
                   {filteredProjects.map((project) => (
-                    <div
-                      key={project.name}
-                      className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 transition hover:bg-white/[0.025]"
-                    >
+                    
+<button
+  type="button"
+  key={project.path}
+  onClick={() => {
+    setScanPath(project.path);
+    setScanError("");
+    document
+      .getElementById("scanner")
+      ?.scrollIntoView({ behavior: "smooth" });
+  }}
+  className="flex w-full flex-wrap items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+>
+
                       <div className="flex min-w-0 items-center gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.03]">
                           <Code2 size={19} className={project.color} />
@@ -905,6 +1029,13 @@ function App() {
                           <p className="mt-1 truncate text-xs text-gray-500">
                             {project.path}
                           </p>
+                          <p className="mt-1 text-xs text-gray-500">
+  Last scanned: {project.lastScanned}
+</p>
+
+<p className="mt-1 text-xs text-gray-500">
+  {project.analyzedFiles} files · {project.dependencyCount} dependencies
+</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
@@ -921,7 +1052,7 @@ function App() {
                         </div>
                         <ChevronRight size={16} className="text-gray-600" />
                       </div>
-                    </div>
+                    </button>
                   ))}
                   {filteredProjects.length === 0 && (
                     <p className="px-5 py-8 text-center text-sm text-gray-500">
@@ -1000,15 +1131,211 @@ function App() {
               </div>
             </section>
 
+            
+<section className="rounded-xl border border-white/[0.08] bg-[#111419] p-5">
+  <div className="flex items-center gap-2">
+    <GitFork size={17} className="text-amber-300" />
+    <h2 className="text-sm font-semibold text-white">
+      Dependency Hotspots
+    </h2>
+  </div>
+
+  <p className="mt-1 text-xs text-gray-500">
+    Files that other files depend on most frequently.
+  </p>
+
+  {!scanResult ? (
+    <p className="mt-4 text-sm text-gray-500">
+      Scan a codebase to discover dependency hotspots.
+    </p>
+  ) : dependencyHotspots.length === 0 ? (
+    <p className="mt-4 text-sm text-gray-500">
+      No dependency hotspots found.
+    </p>
+  ) : (
+    <div className="mt-4 space-y-2">
+      {dependencyHotspots.map((file, index) => (
+        <button
+          key={file.path}
+          type="button"
+          onClick={() => {
+            setSelectedFilePath(file.path);
+            document
+              .getElementById("selected-file-details")
+              ?.scrollIntoView({ behavior: "smooth" });
+          }}
+          className="flex w-full items-center gap-3 rounded-lg border border-white/[0.07] p-3 text-left transition hover:border-amber-400/30 hover:bg-white/[0.03]"
+        >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-amber-400/10 text-xs font-semibold text-amber-300">
+            {index + 1}
+          </span>
+
+          <span className="min-w-0 flex-1">
+            <span className="block break-all text-sm text-gray-200">
+              {file.path}
+            </span>
+            <span className="mt-1 block text-xs text-gray-500">
+              {file.dependentCount} dependent file(s)
+            </span>
+          </span>
+
+          <ChevronRight size={16} className="shrink-0 text-gray-500" />
+        </button>
+      ))}
+    </div>
+  )}
+</section>
+
+
+<section
+  id="orphan-files"
+  className="rounded-2xl border border-white/10 bg-white/5 p-5"
+>
+  <div className="mb-4 flex items-center gap-3">
+    <FileWarning className="h-5 w-5 text-amber-400" />
+    <div>
+      <h2 className="text-lg font-semibold">Unreferenced Files</h2>
+      <p className="text-sm text-gray-400">
+        Files not imported by another scanned file.
+      </p>
+    </div>
+    <span className="ml-auto rounded-lg bg-white/10 px-3 py-1 text-sm">
+      {orphanFiles.length}
+    </span>
+  </div>
+
+  {!scanResult ? (
+    <p className="text-sm text-gray-400">
+      Scan a project to identify unreferenced files.
+    </p>
+  ) : orphanFiles.length === 0 ? (
+    <p className="text-sm text-gray-400">
+      No unreferenced files found.
+    </p>
+  ) : (
+    <div className="space-y-2">
+      {orphanFiles.slice(0, 10).map((file) => (
+        <button
+          key={file.path}
+          type="button"
+          onClick={() => {
+            selectFile(file.path);
+            document
+              .getElementById("selected-file-details")
+              ?.scrollIntoView({ behavior: "smooth" });
+          }}
+          className="flex w-full items-center gap-3 rounded-xl border border-white/10 p-3 text-left hover:bg-white/10"
+        >
+          <FileWarning className="h-4 w-4 shrink-0 text-amber-400" />
+          <span className="min-w-0 flex-1 break-all text-sm">
+            {file.path}
+          </span>
+          <ChevronRight className="h-4 w-4 shrink-0" />
+        </button>
+      ))}
+      {orphanFiles.length > 10 && (
+        <p className="text-sm text-gray-400">
+          Showing 10 of {orphanFiles.length} files.
+        </p>
+      )}
+    </div>
+  )}
+
+  <p className="mt-4 text-xs text-gray-500">
+    Note: Entry points, routes, and dynamically loaded files may
+    appear here. These files are not necessarily unused.
+  </p>
+</section>
+
+
             <section id="code-insights" className="rounded-xl border border-white/[0.08] bg-[#111419] p-5">
               <div className="flex items-center gap-2">
                 <ShieldCheck size={17} className="text-emerald-300" />
                 <h2 className="text-sm font-semibold text-white">Code insights</h2>
               </div>
-              <p className="mt-2 text-sm text-gray-500">
-                Automated code-quality insights will appear here as analysis
-                capabilities are added.
-              </p>
+              {!scanResult ? (
+  <p className="mt-2 text-sm text-gray-500">
+    Scan a codebase to analyze its dependency structure and detect circular
+    dependencies.
+  </p>
+) : (
+  <div className="mt-4 space-y-4">
+    <div
+      className={`rounded-lg border p-4 ${
+        scanResult.circularDependencyCount > 0
+          ? "border-red-400/20 bg-red-400/[0.04]"
+          : "border-emerald-400/20 bg-emerald-400/[0.04]"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        {scanResult.circularDependencyCount > 0 ? (
+          <XCircle size={18} className="text-red-400" />
+        ) : (
+          <CheckCircle2 size={18} className="text-emerald-300" />
+        )}
+
+        <h3 className="text-sm font-medium text-white">
+          {scanResult.circularDependencyCount > 0
+            ? "Circular dependencies detected"
+            : "No circular dependencies detected"}
+        </h3>
+      </div>
+
+      <p className="mt-2 text-xs leading-5 text-gray-400">
+        {scanResult.circularDependencyCount > 0
+          ? `The scanner found ${scanResult.circularDependencyCount} dependency cycle(s). Review the file relationships below.`
+          : `Analyzed ${scanResult.analyzedFiles} source files and found no circular dependency cycles.`}
+      </p>
+    </div>
+
+    {scanResult.circularDependencies.length > 0 && (
+      <div className="space-y-3">
+        {scanResult.circularDependencies.map((cycle, index) => (
+          <div
+            key={`${index}-${cycle.join("-")}`}
+            className="rounded-lg border border-red-400/15 bg-white/[0.02] p-4"
+          >
+            <p className="mb-3 text-xs font-medium text-red-300">
+              Cycle {index + 1}
+            </p>
+
+            <div className="space-y-2">
+              {cycle.map((filePath, fileIndex) => (
+                <div key={`${fileIndex}-${filePath}`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const matchingFile = scanResult.sourceFiles.find(
+                        (file) => file.path === filePath,
+                      );
+
+                      if (matchingFile) {
+                        setSelectedFilePath(matchingFile.path);
+
+                        document
+                          .getElementById("selected-file-details")
+                          ?.scrollIntoView({ behavior: "smooth" });
+                      }
+                    }}
+                    className="w-full break-all rounded-md border border-white/[0.07] bg-white/[0.025] px-3 py-2 text-left text-xs text-gray-300 transition hover:border-red-400/30 hover:text-white"
+                  >
+                    {filePath}
+                  </button>
+
+                  {fileIndex < cycle.length - 1 && (
+                    <div className="py-1 pl-3 text-xs text-red-400">
+                      ↓ depends on
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+)}
             </section>
 
             <footer className="flex flex-col gap-2 border-t border-white/[0.07] pt-5 text-xs text-gray-600 sm:flex-row sm:items-center sm:justify-between">

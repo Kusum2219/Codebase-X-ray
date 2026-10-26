@@ -1,4 +1,3 @@
-
 import { useMemo } from "react";
 import {
   Background,
@@ -94,6 +93,8 @@ export default function DependencyGraph({
 }: DependencyGraphProps) {
   const { nodes, edges } = useMemo(() => {
     const columns = Math.max(1, Math.ceil(Math.sqrt(files.length)));
+    const nodeWidth = 290;
+    const nodeHeight = 160;
 
     // Find the selected file and its direct connections first.
     const connectedPaths = new Set<string>();
@@ -120,9 +121,9 @@ export default function DependencyGraph({
       id: file.path,
       type: "fileNode",
       position: {
-        x: (index % columns) * 290,
-        y: Math.floor(index / columns) * 145,
-      },
+  x: (index % columns) * nodeWidth,
+  y: Math.floor(index / columns) * nodeHeight,
+},
       data: {
         file,
         selected: file.path === selectedFilePath,
