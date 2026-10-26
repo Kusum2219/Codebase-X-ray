@@ -27,6 +27,8 @@ import {
   Filter,
   X,
   FileWarning,
+  ShieldAlert,
+  AlertTriangle,
   
 } from "lucide-react";
 import api from "./api";
@@ -342,6 +344,46 @@ const orphanFiles = useMemo(() => {
       !importedPaths.has(file.path),
   );
 }, [scanResult]);
+
+const fileRiskScores = useMemo(() => {
+  if (!scanResult) return [];
+
+  return scanResult.sourceFiles
+    .filter((file) => !file.skipped)
+    .map((file) => {
+      const dependentCount = scanResult.sourceFiles.filter(
+        (otherFile) =>
+          !otherFile.skipped &&
+          otherFile.localDependencies.includes(file.path),
+      ).length;
+
+      const hasCircularDependency =
+        scanResult.circularDependencies.some((cycle) =>
+          cycle.includes(file.path),
+        );
+
+      const isUnreferenced = orphanFiles.some(
+        (orphan) => orphan.path === file.path,
+      );
+
+      let score = 0;
+
+      if (hasCircularDependency) score += 50;
+      if (dependentCount >= 5) score += 25;
+      else if (dependentCount >= 3) score += 15;
+      if (isUnreferenced) score += 10;
+
+      return {
+        ...file,
+        dependentCount,
+        hasCircularDependency,
+        isUnreferenced,
+        riskScore: Math.min(score, 100),
+      };
+    })
+    .sort((a, b) => b.riskScore - a.riskScore)
+    .slice(0, 10);
+}, [scanResult, orphanFiles]);
 
   function selectFile(path: string) {
     setSelectedFilePath(path);
@@ -821,6 +863,38 @@ const orphanFiles = useMemo(() => {
               </div>
             </section>
 
+            
+<section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+  <div className="rounded-xl border border-white/[0.08] bg-[#111419] p-4">
+    <p className="text-xs text-gray-500">Total Files</p>
+    <p className="mt-2 text-2xl font-semibold text-white">
+      {scanResult?.totalFiles ?? 0}
+    </p>
+  </div>
+
+  <div className="rounded-xl border border-white/[0.08] bg-[#111419] p-4">
+    <p className="text-xs text-gray-500">Dependencies</p>
+    <p className="mt-2 text-2xl font-semibold text-white">
+      {scanResult?.dependencyCount ?? 0}
+    </p>
+  </div>
+
+  <div className="rounded-xl border border-white/[0.08] bg-[#111419] p-4">
+    <p className="text-xs text-gray-500">Circular Issues</p>
+    <p className="mt-2 text-2xl font-semibold text-rose-300">
+      {scanResult?.circularDependencyCount ?? 0}
+    </p>
+  </div>
+
+  <div className="rounded-xl border border-white/[0.08] bg-[#111419] p-4">
+    <p className="text-xs text-gray-500">High-Risk Files</p>
+    <p className="mt-2 text-2xl font-semibold text-amber-300">
+      {fileRiskScores.filter((file) => file.riskScore >= 50).length}
+    </p>
+  </div>
+</section>
+
+
             <section
               id="dependency-graph"
               className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#111419]"
@@ -1244,6 +1318,167 @@ const orphanFiles = useMemo(() => {
   <p className="mt-4 text-xs text-gray-500">
     Note: Entry points, routes, and dynamically loaded files may
     appear here. These files are not necessarily unused.
+  </p>
+</section>
+ 
+ 
+<section className="rounded-xl border border-white/[0.08] bg-[#111419] p-5">
+  <div className="flex items-center gap-2">
+    <ShieldAlert size={18} className="text-rose-300" />
+    <h2 className="text-sm font-semibold text-white">
+      File Risk Analysis
+    </h2>
+  </div>
+
+  <p className="mt-1 text-xs text-gray-500">
+    Files ranked by circular dependencies, dependency count, and
+    unreferenced status.
+  </p>
+
+  {!scanResult ? (
+    <p className="mt-4 text-sm text-gray-500">
+      Scan a codebase to calculate file risk scores.
+    </p>
+  ) : fileRiskScores.length === 0 ? (
+    <p className="mt-4 text-sm text-gray-500">
+      No files available for risk analysis.
+    </p>
+  ) : (
+    <div className="mt-4 space-y-3">
+      {fileRiskScores.map((file) => {
+        const riskLevel =
+          file.riskScore >= 50
+            ? "High"
+            : file.riskScore >= 25
+              ? "Medium"
+              : file.riskScore > 0
+                ? "Low"
+                : "Minimal";
+
+        const riskColor =
+          file.riskScore >= 50
+            ? "text-rose-300"
+            : file.riskScore >= 25
+              ? "text-amber-300"
+              : file.riskScore > 0
+                ? "text-sky-300"
+                : "text-emerald-300";
+
+        return (
+          <button
+            key={file.path}
+            type="button"
+            onClick={() => {
+              selectFile(file.path);
+              document
+                .getElementById("selected-file-details")
+                ?.scrollIntoView({ behavior: "smooth" });
+            }}
+            className="w-full rounded-lg border border-white/[0.07] p-3 text-left transition hover:bg-white/[0.03]"
+          >
+            <div className="flex items-start gap-3">
+              <AlertTriangle
+                size={16}
+                className={`mt-0.5 shrink-0 ${riskColor}`}
+              />
+
+              <div className="min-w-0 flex-1">
+                <p className="break-all text-sm text-gray-200">
+                  {file.path}
+                </p>
+
+                <p className="mt-1 text-xs text-gray-500">
+                  {riskLevel} risk · {file.dependentCount} dependent file(s)
+                </p>
+
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className={`h-full rounded-full ${
+                      file.riskScore >= 50
+                        ? "bg-rose-400"
+                        : file.riskScore >= 25
+                          ? "bg-amber-400"
+                          : file.riskScore > 0
+                            ? "bg-sky-400"
+                            : "bg-emerald-400"
+                    }`}
+                    style={{ width: `${file.riskScore}%` }}
+                  />
+                </div>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {file.hasCircularDependency && (
+                    <span className="rounded bg-rose-400/10 px-2 py-1 text-xs text-rose-300">
+                      Circular dependency
+                    </span>
+                  )}
+
+                  {file.dependentCount >= 3 && (
+                    <span className="rounded bg-amber-400/10 px-2 py-1 text-xs text-amber-300">
+                      Highly depended on
+                    </span>
+                  )}
+
+                  {file.isUnreferenced && (
+                    <span className="rounded bg-sky-400/10 px-2 py-1 text-xs text-sky-300">
+                      Unreferenced
+                    </span>
+                  )}
+
+                  {(file.hasCircularDependency ||
+  file.dependentCount >= 3 ||
+  file.isUnreferenced) && (
+  <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+    <p className="text-xs font-semibold text-gray-200">
+      Recommended action
+    </p>
+
+    <ul className="mt-2 space-y-1 text-xs text-gray-400">
+      {file.hasCircularDependency && (
+        <li>
+          • Review the circular import chain and consider extracting
+          shared logic into a separate module.
+        </li>
+      )}
+
+      {file.dependentCount >= 3 && (
+        <li>
+          • Review dependent files and run relevant tests before
+          modifying this module.
+        </li>
+      )}
+
+      {file.isUnreferenced && (
+        <li>
+          • Verify entry points, routes, and dynamic imports before
+          considering this file unused.
+        </li>
+      )}
+    </ul>
+  </div>
+)}
+
+                  {file.riskScore === 0 && (
+                    <span className="text-xs text-emerald-300">
+                      No configured risk signals
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <span className={`shrink-0 text-sm font-semibold ${riskColor}`}>
+                {file.riskScore}/100
+              </span>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  )}
+
+  <p className="mt-4 text-xs text-gray-500">
+    Heuristic score, not a probability of bugs. Unreferenced files may
+    be valid entry points or dynamically loaded modules.
   </p>
 </section>
 
