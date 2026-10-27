@@ -308,6 +308,31 @@ if (result.success) {
   const selectedFile = scanResult?.sourceFiles.find(
     (file) => file.path === selectedFilePath,
   );
+  const selectedFileDependencies = useMemo(() => {
+  if (!scanResult || !selectedFile) {
+    return {
+      imports: [],
+      usedBy: [],
+    };
+  }
+
+  const imports = selectedFile.localDependencies
+    .map((path) =>
+      scanResult.sourceFiles.find((file) => file.path === path),
+    )
+    .filter((file) => file !== undefined);
+
+  const usedBy = scanResult.sourceFiles.filter(
+    (file) =>
+      !file.skipped &&
+      file.localDependencies.includes(selectedFile.path),
+  );
+
+  return {
+    imports,
+    usedBy,
+  };
+}, [scanResult, selectedFile]);
 
   
 const dependencyHotspots = useMemo(() => {
@@ -1032,28 +1057,71 @@ const fileRiskScores = useMemo(() => {
                       )}
                     </div>
                   </div>
-                  <div>
-                    <p className="mb-2 text-xs text-gray-500">
-                      Local dependencies (
-                      {selectedFile.localDependencies.length})
-                    </p>
-                    <div className="space-y-2">
-                      {selectedFile.localDependencies.length > 0 ? (
-                        selectedFile.localDependencies.map((item) => (
-                          <div
-                            key={item}
-                            className="rounded-lg border border-emerald-400/10 bg-emerald-400/[0.04] px-3 py-2 text-xs text-emerald-200"
-                          >
-                            {item}
-                          </div>
-                        ))
-                      ) : (
-                        <span className="text-xs text-gray-500">
-                          No local dependencies found
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                  
+<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+  {/* Files this file depends on */}
+  <div>
+    <p className="mb-2 text-xs font-medium text-gray-400">
+      Depends On ({selectedFileDependencies.imports.length})
+    </p>
+
+    <div className="space-y-2">
+      {selectedFileDependencies.imports.length > 0 ? (
+        selectedFileDependencies.imports.map((file) => (
+          <button
+            type="button"
+            key={file.path}
+            onClick={() => {
+              selectFile(file.path);
+              document
+                .getElementById("selected-file-details")
+                ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }}
+            className="w-full break-all rounded-lg border border-emerald-400/10 bg-emerald-400/[0.04] px-3 py-2 text-left text-xs text-emerald-200 transition hover:border-emerald-400/40 hover:bg-emerald-400/[0.08]"
+          >
+            {file.path}
+          </button>
+        ))
+      ) : (
+        <p className="text-xs text-gray-500">
+          No local dependencies found.
+        </p>
+      )}
+    </div>
+  </div>
+
+  {/* Files that depend on this file */}
+  <div>
+    <p className="mb-2 text-xs font-medium text-gray-400">
+      Used By ({selectedFileDependencies.usedBy.length})
+    </p>
+
+    <div className="space-y-2">
+      {selectedFileDependencies.usedBy.length > 0 ? (
+        selectedFileDependencies.usedBy.map((file) => (
+          <button
+            type="button"
+            key={file.path}
+            onClick={() => {
+              selectFile(file.path);
+              document
+                .getElementById("selected-file-details")
+                ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }}
+            className="w-full break-all rounded-lg border border-sky-400/10 bg-sky-400/[0.04] px-3 py-2 text-left text-xs text-sky-200 transition hover:border-sky-400/40 hover:bg-sky-400/[0.08]"
+          >
+            {file.path}
+          </button>
+        ))
+      ) : (
+        <p className="text-xs text-gray-500">
+          No files depend on this file.
+        </p>
+      )}
+    </div>
+  </div>
+</div>
+
                 </div>
               )}
             </section>
