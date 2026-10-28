@@ -11,15 +11,17 @@ export function extractImports(content: string): string[] {
   const imports = new Set<string>();
 
   const patterns = [
-    /\bimport\s+(?:[\s\S]*?\s+from\s+)?["']([^"']+)["']/g,
-    /\bexport\s+[\s\S]*?\s+from\s+["']([^"']+)["']/g,
+    /\bimport\s+(?:[\s\S]*?\s+from\s*)?["']([^"']+)["']/g,
+    /\bexport\s+[\s\S]*?\s+from\s*["']([^"']+)["']/g,
     /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
     /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
   ];
 
   for (const pattern of patterns) {
     for (const match of content.matchAll(pattern)) {
-      if (match[1]) imports.add(match[1]);
+      if (match[1]) {
+        imports.add(match[1]);
+      }
     }
   }
 
@@ -35,7 +37,9 @@ export function findCircularDependencies(
   for (const file of files) {
     graph.set(
       file.path,
-      file.localDependencies.filter((dep) => filePaths.has(dep)),
+      [...new Set(file.localDependencies)].filter((dep) =>
+        filePaths.has(dep),
+      ),
     );
   }
 

@@ -334,6 +334,54 @@ if (result.success) {
   };
 }, [scanResult, selectedFile]);
 
+const impactAnalysis = useMemo(() => {
+  if (!scanResult || !selectedFile) {
+    return {
+      affectedFiles: [] as ScannedFile[],
+      directCount: 0,
+      totalCount: 0,
+    };
+  }
+
+  const affectedPaths = new Set<string>();
+  const visited = new Set<string>([selectedFile.path]);
+  const queue = [selectedFile.path];
+
+  while (queue.length > 0) {
+    const currentPath = queue.shift()!;
+
+    const dependents = scanResult.sourceFiles.filter(
+      (file) =>
+        !file.skipped &&
+        file.localDependencies.includes(currentPath),
+    );
+
+    for (const dependent of dependents) {
+      if (!visited.has(dependent.path)) {
+        visited.add(dependent.path);
+        affectedPaths.add(dependent.path);
+        queue.push(dependent.path);
+      }
+    }
+  }
+
+  const affectedFiles = scanResult.sourceFiles.filter((file) =>
+    affectedPaths.has(file.path),
+  );
+
+  const directCount = scanResult.sourceFiles.filter(
+    (file) =>
+      !file.skipped &&
+      file.localDependencies.includes(selectedFile.path),
+  ).length;
+
+  return {
+    affectedFiles,
+    directCount,
+    totalCount: affectedFiles.length,
+  };
+}, [scanResult, selectedFile]);
+
   
 const dependencyHotspots = useMemo(() => {
   if (!scanResult) return [];
@@ -879,12 +927,28 @@ const fileRiskScores = useMemo(() => {
                   subtitle="Imports discovered during analysis"
                   icon={GitFork}
                 />
-                <StatCard
-                  title="Potential issues"
-                  value="—"
-                  subtitle="Available after analysis"
-                  icon={Activity}
-                />
+                
+<StatCard
+  title="Potential issues"
+  value={
+    scanResult
+      ? String(
+          fileRiskScores.filter(
+            (file) =>
+              file.riskScore >= 25 ||
+              file.hasCircularDependency,
+          ).length,
+        )
+      : "—"
+  }
+  subtitle={
+    scanResult
+      ? "Files with medium/high risk or circular dependencies"
+      : "Available after scanning"
+  }
+  icon={Activity}
+/>
+
               </div>
             </section>
 
@@ -1036,6 +1100,75 @@ const fileRiskScores = useMemo(() => {
                       {selectedFile.extension}
                     </span>
                   </div>
+
+                  
+<div className="rounded-xl border border-amber-400/15 bg-amber-400/[0.04] p-4">
+  <div className="flex items-center gap-2">
+    <Zap size={16} className="text-amber-300" />
+    <h3 className="text-sm font-semibold text-white">
+      Impact Analysis
+    </h3>
+  </div>
+
+  <p className="mt-1 text-xs text-gray-500">
+    Files that may be affected if this file changes.
+  </p>
+
+  <div className="mt-4 grid grid-cols-2 gap-3">
+    <div className="rounded-lg border border-white/[0.07] bg-white/[0.03] p-3">
+      <p className="text-xs text-gray-500">Direct Impact</p>
+      <p className="mt-1 text-2xl font-semibold text-amber-300">
+        {impactAnalysis.directCount}
+      </p>
+      <p className="mt-1 text-[11px] text-gray-500">
+        Directly dependent files
+      </p>
+    </div>
+
+    <div className="rounded-lg border border-white/[0.07] bg-white/[0.03] p-3">
+      <p className="text-xs text-gray-500">Total Impact</p>
+      <p className="mt-1 text-2xl font-semibold text-amber-300">
+        {impactAnalysis.totalCount}
+      </p>
+      <p className="mt-1 text-[11px] text-gray-500">
+        Direct + indirect files
+      </p>
+    </div>
+  </div>
+
+  <div className="mt-4">
+    <p className="mb-2 text-xs font-medium text-gray-400">
+      Potentially Affected Files ({impactAnalysis.totalCount})
+    </p>
+
+    <div className="space-y-2">
+      {impactAnalysis.affectedFiles.length > 0 ? (
+        impactAnalysis.affectedFiles.map((file) => (
+          <button
+            type="button"
+            key={file.path}
+            onClick={() => {
+              selectFile(file.path);
+              document
+                .getElementById("selected-file-details")
+                ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }}
+            className="flex w-full items-center gap-2 rounded-lg border border-amber-400/10 bg-amber-400/[0.03] px-3 py-2 text-left text-xs text-gray-300 transition hover:border-amber-400/30 hover:bg-amber-400/[0.07]"
+          >
+            <FileCode2 size={14} className="shrink-0 text-amber-300" />
+            <span className="break-all">{file.path}</span>
+            <ChevronRight size={14} className="ml-auto shrink-0 text-gray-500" />
+          </button>
+        ))
+      ) : (
+        <p className="text-xs text-gray-500">
+          No other files depend on this file.
+        </p>
+      )}
+    </div>
+  </div>
+</div>
+
                   <div>
                     <p className="mb-2 text-xs text-gray-500">
                       Imported modules ({selectedFile.imports.length})
@@ -1077,7 +1210,7 @@ const fileRiskScores = useMemo(() => {
                 .getElementById("selected-file-details")
                 ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
             }}
-            className="w-full break-all rounded-lg border border-emerald-400/10 bg-emerald-400/[0.04] px-3 py-2 text-left text-xs text-emerald-200 transition hover:border-emerald-400/40 hover:bg-emerald-400/[0.08]"
+            className="block w-full min-w-0 whitespace-normal break-words rounded-lg border border-emerald-400/10 bg-emerald-400/[0.04] px-3 py-2 text-left text-xs leading-5 text-emerald-200 transition hover:border-emerald-400/40 hover:bg-emerald-400/[0.08]"
           >
             {file.path}
           </button>
@@ -1108,7 +1241,7 @@ const fileRiskScores = useMemo(() => {
                 .getElementById("selected-file-details")
                 ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
             }}
-            className="w-full break-all rounded-lg border border-sky-400/10 bg-sky-400/[0.04] px-3 py-2 text-left text-xs text-sky-200 transition hover:border-sky-400/40 hover:bg-sky-400/[0.08]"
+           className="block w-full min-w-0 whitespace-normal break-words rounded-lg border border-sky-400/10 bg-sky-400/[0.04] px-3 py-2 text-left text-xs leading-5 text-sky-200 transition hover:border-sky-400/40 hover:bg-sky-400/[0.08]"
           >
             {file.path}
           </button>

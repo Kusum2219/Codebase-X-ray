@@ -23,14 +23,16 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-const sourceExtensions = new Set([
+const sourceExtensions = [
   ".ts",
   ".tsx",
   ".js",
   ".jsx",
   ".mjs",
   ".cjs",
-]);
+];
+
+const extensionSet = new Set(sourceExtensions);
 
 const ignoredFolders = [
   "**/node_modules/**",
@@ -40,6 +42,68 @@ const ignoredFolders = [
   "**/coverage/**",
   "**/.next/**",
 ];
+
+function normalizePath(filePath: string): string {
+  return filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+function resolveLocalImport(
+  importerPath: string,
+  importPath: string,
+  sourceFileSet: Set<string>,
+): string[] {
+  // This resolver handles relative imports only.
+  // Package imports and unresolved aliases are intentionally excluded.
+  if (!importPath.startsWith(".")) {
+    return [];
+  }
+
+  const base = normalizePath(
+    path.posix.normalize(
+      path.posix.join(path.posix.dirname(importerPath), importPath),
+    ),
+  );
+
+  const candidates = new Set<string>();
+  
+  const explicitExtension = path.posix.extname(base);
+
+  const extensionlessBase = explicitExtension
+    ? base.slice(0, -explicitExtension.length)
+    : base;
+
+  const sourceEquivalentExtensions: Record<string, string[]> = {
+    ".js": [".ts", ".tsx", ".js", ".jsx"],
+    ".jsx": [".tsx", ".jsx", ".ts", ".js"],
+    ".mjs": [".mjs", ".js", ".ts"],
+    ".cjs": [".cjs", ".js", ".ts"],
+  };
+
+
+  // Exact path, including imports that specify an extension.
+  candidates.add(base);
+  
+  for (const extension of sourceEquivalentExtensions[explicitExtension] ?? []) {
+    candidates.add(extensionlessBase + extension);
+  }
+
+
+  // Extension resolution for imports such as "./utils".
+  if (!path.posix.extname(base)) {
+    for (const extension of sourceExtensions) {
+      candidates.add(base + extension);
+    }
+  }
+
+  // Directory entry points such as "./components".
+  for (const extension of sourceExtensions) {
+    candidates.add(path.posix.join(base, `index${extension}`));
+  }
+
+  return [...candidates].filter((candidate) =>
+    sourceFileSet.has(candidate),
+  );
+}
 
 async function scanDirectory(directory: string) {
   const root = path.resolve(directory);
@@ -58,9 +122,9 @@ async function scanDirectory(directory: string) {
   });
 
   const sourceFiles = paths
-    .filter((file) => sourceExtensions.has(path.extname(file)))
+    .filter((file) => extensionSet.has(path.posix.extname(file)))
     .slice(0, 2000)
-    .map((file) => file.replace(/\\/g, "/"));
+    .map(normalizePath);
 
   const sourceFileSet = new Set(sourceFiles);
 
@@ -72,7 +136,7 @@ async function scanDirectory(directory: string) {
       if (fileInfo.size > 500_000) {
         return {
           path: file,
-          extension: path.extname(file),
+          extension: path.posix.extname(file),
           imports: [],
           localDependencies: [],
           skipped: "File exceeds 500 KB",
@@ -82,43 +146,29 @@ async function scanDirectory(directory: string) {
       const content = await readFile(absolutePath, "utf8");
       const imports = extractImports(content);
 
-      const localDependencies = imports
-        .filter((item) => item.startsWith("."))
-        .flatMap((item) => {
-          const base = path.posix.normalize(
-            path.posix.join(path.posix.dirname(file), item),
-          );
-
-          const candidates = [
-            base,
-            ...[...sourceExtensions].map((ext) => base + ext),
-            ...[...sourceExtensions].map((ext) =>
-              path.posix.join(base, "index" + ext),
-            ),
-          ];
-
-          return candidates.filter((candidate) =>
-            sourceFileSet.has(candidate),
-          );
-        });
+      const localDependencies = [
+        ...new Set(
+          imports.flatMap((item) =>
+            resolveLocalImport(file, item, sourceFileSet),
+          ),
+        ),
+      ];
 
       return {
         path: file,
-        extension: path.extname(file),
+        extension: path.posix.extname(file),
         imports,
-        localDependencies: [...new Set(localDependencies)],
+        localDependencies,
       };
     }),
   );
 
   const dependencyCount = files.reduce(
-    (total, file) =>
-      total + file.localDependencies.length,
+    (total, file) => total + file.localDependencies.length,
     0,
   );
 
-  const circularDependencies =
-    findCircularDependencies(files);
+  const circularDependencies = findCircularDependencies(files);
 
   return {
     root,
@@ -143,9 +193,10 @@ app.post("/api/scan", async (req, res) => {
   }
 
   try {
-    await access(path.resolve(directory));
+    const resolvedDirectory = path.resolve(directory);
+    await access(resolvedDirectory);
 
-    const result = await scanDirectory(directory);
+    const result = await scanDirectory(resolvedDirectory);
 
     res.json({
       success: true,
