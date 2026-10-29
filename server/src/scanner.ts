@@ -1,4 +1,4 @@
-
+import * as ts from "typescript";
 export type ScannedFile = {
   path: string;
   extension: string;
@@ -8,26 +8,59 @@ export type ScannedFile = {
 };
 
 export function extractImports(content: string): string[] {
+  const sourceFile = ts.createSourceFile(
+    "scanned-file.tsx",
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+
   const imports = new Set<string>();
 
-  const patterns = [
-    /\bimport\s+(?:[\s\S]*?\s+from\s*)?["']([^"']+)["']/g,
-    /\bexport\s+[\s\S]*?\s+from\s*["']([^"']+)["']/g,
-    /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
-    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
-  ];
+  function visit(node: ts.Node): void {
+    if (
+      ts.isImportDeclaration(node) &&
+      ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      imports.add(node.moduleSpecifier.text);
+    }
 
-  for (const pattern of patterns) {
-    for (const match of content.matchAll(pattern)) {
-      if (match[1]) {
-        imports.add(match[1]);
+    if (
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      imports.add(node.moduleSpecifier.text);
+    }
+
+    if (ts.isCallExpression(node)) {
+      const firstArgument = node.arguments[0];
+
+      if (
+        firstArgument &&
+        ts.isStringLiteralLike(firstArgument)
+      ) {
+        if (
+          node.expression.kind === ts.SyntaxKind.ImportKeyword
+        ) {
+          imports.add(firstArgument.text);
+        } else if (
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === "require"
+        ) {
+          imports.add(firstArgument.text);
+        }
       }
     }
+
+    ts.forEachChild(node, visit);
   }
+
+  visit(sourceFile);
 
   return [...imports];
 }
-
 export function findCircularDependencies(
   files: ScannedFile[],
 ): string[][] {

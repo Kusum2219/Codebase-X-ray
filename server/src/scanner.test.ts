@@ -135,3 +135,40 @@ it("ignores dependencies that are not in the scanned files", () => {
 
   expect(findCircularDependencies(files)).toEqual([]);
 });
+
+describe("extractImports edge cases", () => {
+  it("ignores import statements inside comments", () => {
+    const code = `
+      // import fake from "./fake";
+      /* import anotherFake from "./anotherFake"; */
+      import real from "./real";
+    `;
+
+    expect(extractImports(code)).toEqual(["./real"]);
+  });
+
+  it("ignores import-like text inside strings", () => {
+    const code = `
+      const example = 'import fake from "./fake"';
+      const message = "require('./missing')";
+      import real from "./real";
+    `;
+
+    expect(extractImports(code)).toEqual(["./real"]);
+  });
+
+  it("detects side-effect and multiline imports", () => {
+    const code = `
+      import "./setup";
+
+      import {
+        helper
+      } from "./utils";
+    `;
+
+    expect(extractImports(code)).toEqual([
+      "./setup",
+      "./utils",
+    ]);
+  });
+});
