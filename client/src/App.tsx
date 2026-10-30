@@ -57,6 +57,32 @@ type ScanResult = {
   sourceFiles: ScannedFile[];
 };
 
+type GitDiff = {
+  filePath: string;
+  diff: string;
+  hasChanges: boolean;
+};
+type GitFilePreview = {
+  filePath: string;
+  content: string;
+  size: number;
+};
+
+type GitInfo = {
+  isGitRepo: boolean;
+  branch: string | null;
+  changedFiles: {
+    path: string;
+    index: string;
+    workingTree: string;
+  }[];
+  recentCommits: {
+    hash: string;
+    message: string;
+    author: string;
+    date: string;
+  }[];
+};
 
 type RecentProject = {
   name: string;
@@ -119,6 +145,18 @@ function App() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
+  const [gitInfo, setGitInfo] = useState<GitInfo | null>(null);
+  const [gitLoading, setGitLoading] = useState(false);
+  const [gitError, setGitError] = useState("");
+  const [selectedDiffFile, setSelectedDiffFile] = useState("");
+  const [gitDiff, setGitDiff] = useState<GitDiff | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffError, setDiffError] = useState("");
+  const [filePreview, setFilePreview] =
+  useState<GitFilePreview | null>(null);
+
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
 
 
   useEffect(() => {
@@ -159,6 +197,78 @@ useEffect(() => {
   }
 }, []);
 
+async function loadGitInfo(repoPath: string) {
+  setGitLoading(true);
+  setGitError("");
+
+  try {
+    const response = await api.get("/git-info", {
+      params: { path: repoPath },
+    });
+
+    setGitInfo(response.data.data);
+  } catch {
+    setGitInfo(null);
+    setGitError("Unable to fetch Git information.");
+  } finally {
+    setGitLoading(false);
+  }
+}
+
+async function loadFileDiff() {
+  if (!selectedDiffFile) return;
+
+  setDiffLoading(true);
+  setDiffError("");
+  setGitDiff(null);
+  setFilePreview(null);
+  setPreviewError("");
+
+  try {
+    const response = await api.get("/git-diff", {
+      params: {
+        path: scanPath.trim(),
+        file: selectedDiffFile,
+      },
+    });
+
+    setGitDiff(response.data.data);
+  } catch (error) {
+    console.error("Git diff error:", error);
+    setDiffError("Unable to load file changes.");
+  } finally {
+    setDiffLoading(false);
+  }
+}
+async function loadUntrackedPreview() {
+  if (!selectedDiffFile) return;
+
+   setPreviewLoading(true);
+  setPreviewError("");
+  setFilePreview(null);
+  setGitDiff(null);
+  setDiffError("");
+
+
+  try {
+    const response = await api.get("/git-preview", {
+      params: {
+        path: scanPath.trim(),
+        file: selectedDiffFile,
+      },
+    });
+
+    setFilePreview(response.data.data);
+  } catch (error) {
+    console.error("File preview error:", error);
+
+    setPreviewError(
+      "Unable to preview this file. It may be too large or a binary file."
+    );
+  } finally {
+    setPreviewLoading(false);
+  }
+}
 
   async function handleScan() {
     if (!scanPath.trim()) {
@@ -182,6 +292,9 @@ useEffect(() => {
 const result = response.data as ScanResult;
 setScanResult(result);
 
+if (result.success) {
+  await loadGitInfo(scanPath.trim());
+}
 if (result.success) {
   const normalizedPath = result.root.replace(/[\\/]+$/, "").toLowerCase();
 
@@ -457,6 +570,27 @@ const fileRiskScores = useMemo(() => {
     .sort((a, b) => b.riskScore - a.riskScore)
     .slice(0, 10);
 }, [scanResult, orphanFiles]);
+
+const diffSummary = useMemo(() => {
+  if (!gitDiff?.diff) {
+    return { additions: 0, deletions: 0 };
+  }
+
+  const lines = gitDiff.diff.split("\n");
+
+  let additions = 0;
+  let deletions = 0;
+
+  for (const line of lines) {
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      additions++;
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      deletions++;
+    }
+  }
+
+  return { additions, deletions };
+}, [gitDiff]);
 
   function selectFile(path: string) {
     setSelectedFilePath(path);
@@ -807,6 +941,365 @@ const fileRiskScores = useMemo(() => {
               )}
             </section>
 
+            <section className="rounded-xl border border-white/[0.08] bg-[#111419] p-5">
+  <div className="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <div className="flex items-center gap-2">
+        <GitBranch size={18} className="text-emerald-300" />
+        <h2 className="text-sm font-semibold text-white">Git Integration</h2>
+      </div>
+      <p className="mt-1 text-xs text-gray-500">
+        Repository status, changed files and recent commits.
+      </p>
+    </div>
+
+    <button
+      type="button"
+      onClick={() => void loadGitInfo(scanPath.trim())}
+      disabled={gitLoading}
+      className="rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-300 hover:bg-white/5 disabled:opacity-50"
+    >
+      {gitLoading ? "Refreshing..." : "Refresh Git"}
+    </button>
+  </div>
+
+  {gitLoading ? (
+    <p className="mt-5 text-sm text-gray-400">Loading Git information...</p>
+  ) : gitError ? (
+    <p className="mt-5 text-sm text-red-300">{gitError}</p>
+  ) : !gitInfo ? (
+    <p className="mt-5 text-sm text-gray-500">
+      Scan a codebase to load its Git information.
+    </p>
+  ) : !gitInfo.isGitRepo ? (
+    <p className="mt-5 text-sm text-gray-400">
+      This folder is not inside a Git repository.
+    </p>
+  ) : (
+    <>
+      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border border-white/[0.07] p-4">
+          <p className="text-xs text-gray-500">Current branch</p>
+          <p className="mt-2 flex items-center gap-2 text-lg font-semibold text-emerald-300">
+            <GitBranch size={16} />
+            {gitInfo.branch}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-white/[0.07] p-4">
+          <p className="text-xs text-gray-500">Changed files</p>
+          <p className="mt-2 text-2xl font-semibold text-white">
+            {gitInfo.changedFiles.length}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-white/[0.07] p-4">
+          <p className="text-xs text-gray-500">Recent commits</p>
+          <p className="mt-2 text-2xl font-semibold text-white">
+            {gitInfo.recentCommits.length}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div>
+          <h3 className="mb-3 text-sm font-medium text-white">
+            Changed Files
+          </h3>
+
+          {gitInfo.changedFiles.length === 0 ? (
+            <p className="text-xs text-gray-500">Working tree is clean.</p>
+          ) : (
+            <div className="max-h-72 space-y-2 overflow-y-auto">
+              {gitInfo.changedFiles.map((file) => {
+                const status =
+                  file.index === "?" || file.workingTree === "?"
+                    ? "Untracked"
+                    : file.index === "D" || file.workingTree === "D"
+                      ? "Deleted"
+                      : file.index === "A" || file.workingTree === "A"
+                        ? "Added"
+                        : "Modified";
+
+                const statusColor =
+                  status === "Deleted"
+                    ? "text-red-300 bg-red-400/10"
+                    : status === "Untracked"
+                      ? "text-amber-300 bg-amber-400/10"
+                      : status === "Added"
+                        ? "text-emerald-300 bg-emerald-400/10"
+                        : "text-sky-300 bg-sky-400/10";
+
+                return (
+                  <div
+                    key={file.path}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/[0.07] p-3"
+                  >
+                    <span className="break-all text-xs text-gray-300">
+                      {file.path}
+                    </span>
+                    <span className={`rounded px-2 py-1 text-[10px] ${statusColor}`}>
+                      {status}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <h3 className="mb-3 text-sm font-medium text-white">
+            Recent Commits
+          </h3>
+
+          {gitInfo.recentCommits.length === 0 ? (
+            <p className="text-xs text-gray-500">No commits found.</p>
+          ) : (
+            <div className="space-y-3">
+              {gitInfo.recentCommits.map((commit) => (
+                <div
+                  key={commit.hash}
+                  className="rounded-lg border border-white/[0.07] p-3"
+                >
+                  <p className="text-sm text-gray-200">{commit.message}</p>
+                  <p className="mt-2 text-xs text-gray-500">
+                    {commit.author} ·{" "}
+                    {new Date(commit.date).toLocaleString()}
+                  </p>
+                  <p className="mt-1 font-mono text-[10px] text-gray-600">
+                    {commit.hash.slice(0, 8)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  )}
+</section>
+
+<section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 space-y-5">
+  <div>
+    <div className="flex items-center gap-2">
+      <GitBranch className="h-5 w-5 text-sky-400" />
+      <h2 className="text-lg font-semibold text-white">
+        Git Diff Analysis
+      </h2>
+    </div>
+
+    <p className="mt-1 text-sm text-slate-400">
+      Inspect added and removed lines in your changed files.
+    </p>
+  </div>
+
+  <div className="flex flex-col gap-3 sm:flex-row">
+    <select
+      value={selectedDiffFile}
+      onChange={(e) => {
+        setSelectedDiffFile(e.target.value);
+        setGitDiff(null);
+        setDiffError("");
+      }}
+      className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-sky-500"
+    >
+      <option value="">Select a changed file</option>
+
+      {gitInfo?.changedFiles.map((file) => {
+  const isUntracked =
+    file.index === "?" || file.workingTree === "?";
+
+  return (
+    <option key={file.path} value={file.path}>
+      {isUntracked ? "[Untracked] " : "[Changed] "}
+      {file.path}
+    </option>
+  );
+})}
+    </select>
+
+    {(() => {
+  const selectedFile = gitInfo?.changedFiles.find(
+    (file) => file.path === selectedDiffFile
+  );
+
+  const isUntracked =
+    selectedFile?.index === "?" ||
+    selectedFile?.workingTree === "?";
+
+  return (
+    <button
+      type="button"
+      onClick={
+        isUntracked ? loadUntrackedPreview : loadFileDiff
+      }
+      disabled={
+        !selectedDiffFile ||
+        diffLoading ||
+        previewLoading
+      }
+      className="rounded-lg bg-sky-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {isUntracked
+        ? previewLoading
+          ? "Loading..."
+          : "Preview File"
+        : diffLoading
+          ? "Loading..."
+          : "View Diff"}
+    </button>
+  );
+})()}
+  </div>
+
+  {diffError && (
+    <p className="text-sm text-red-400">{diffError}</p>
+  )}
+
+  {gitDiff && (
+    <div className="overflow-hidden rounded-xl border border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950 px-4 py-3">
+        <span className="break-all text-sm font-medium text-slate-200">
+          {gitDiff.filePath}
+        </span>
+
+        <span className="text-xs text-slate-400">
+          {gitDiff.hasChanges ? "Changes detected" : "No diff available"}
+        </span>
+      </div>
+
+{gitDiff.hasChanges ? (
+  <div>
+    <div className="flex gap-4 border-b border-slate-800 bg-slate-900 px-4 py-3 text-xs">
+      <span className="font-medium text-emerald-400">
+        +{diffSummary.additions} additions
+      </span>
+
+      <span className="font-medium text-red-400">
+        -{diffSummary.deletions} deletions
+      </span>
+    </div>
+
+    <div className="max-h-[500px] overflow-auto bg-slate-950 font-mono text-xs">
+      {(() => {
+        let oldLine = 0;
+        let newLine = 0;
+
+        return gitDiff.diff.split("\n").map((line, index) => {
+          if (line.startsWith("@@")) {
+            const match = line.match(
+              /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/
+            );
+
+            if (match) {
+              oldLine = Number(match[1]);
+              newLine = Number(match[2]);
+            }
+
+            return (
+              <div
+                key={index}
+                className="whitespace-pre border-y border-slate-800 bg-sky-500/10 px-3 py-1 text-sky-400"
+              >
+                {line}
+              </div>
+            );
+          }
+
+          if (
+            line.startsWith("diff --git") ||
+            line.startsWith("index ") ||
+            line.startsWith("---") ||
+            line.startsWith("+++")
+          ) {
+            return (
+              <div
+                key={index}
+                className="whitespace-pre px-3 py-1 text-slate-500"
+              >
+                {line}
+              </div>
+            );
+          }
+
+          let oldNumber = "";
+          let newNumber = "";
+          let lineClass = "text-slate-400";
+
+          if (line.startsWith("+")) {
+            newNumber = String(newLine++);
+            lineClass = "bg-emerald-500/10 text-emerald-400";
+          } else if (line.startsWith("-")) {
+            oldNumber = String(oldLine++);
+            lineClass = "bg-red-500/10 text-red-400";
+          } else {
+            if (oldLine > 0) oldNumber = String(oldLine++);
+            if (newLine > 0) newNumber = String(newLine++);
+          }
+
+          return (
+            <div
+              key={index}
+              className={`flex min-w-max ${lineClass}`}
+            >
+              <span className="w-12 shrink-0 select-none border-r border-slate-800 px-2 text-right text-slate-600">
+                {oldNumber}
+              </span>
+
+              <span className="w-12 shrink-0 select-none border-r border-slate-800 px-2 text-right text-slate-600">
+                {newNumber}
+              </span>
+
+              <span className="whitespace-pre px-3">
+                {line || " "}
+              </span>
+            </div>
+          );
+        });
+      })()}
+    </div>
+  </div>
+) : (
+  <p className="p-5 text-sm text-slate-400">
+    No tracked changes found for this file. Untracked files do not have
+    a Git diff until Git starts tracking them.
+  </p>
+)}
+    </div>
+  )}
+
+  {filePreview && (
+  <div className="overflow-hidden rounded-xl border border-slate-800">
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950 px-4 py-3">
+      <span className="break-all text-sm font-medium text-white">
+        {filePreview.filePath}
+      </span>
+
+      <span className="text-xs text-amber-400">
+        Untracked · {filePreview.size.toLocaleString()} bytes
+      </span>
+    </div>
+
+    <pre className="max-h-[500px] overflow-auto bg-slate-950 p-4 text-xs leading-6 text-slate-300">
+      <code>{filePreview.content}</code>
+    </pre>
+  </div>
+)}
+
+{previewError && (
+  <p className="text-sm text-red-400">{previewError}</p>
+)}
+
+  {!gitDiff && !diffError && !diffLoading && (
+    <div className="rounded-xl border border-dashed border-slate-700 p-8 text-center">
+      <GitBranch className="mx-auto mb-3 h-8 w-8 text-slate-500" />
+      <p className="text-sm text-slate-400">
+        Select a changed file to inspect its code differences.
+      </p>
+    </div>
+  )}
+</section>
             <section
               id="file-search"
               className="rounded-xl border border-white/[0.08] bg-[#111419] p-5"

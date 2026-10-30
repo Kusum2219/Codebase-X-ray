@@ -1,27 +1,29 @@
-
 import express from "express";
 import cors from "cors";
 import fg from "fast-glob";
 import path from "node:path";
 import { access, readFile, stat } from "node:fs/promises";
+
 import {
   extractImports,
   findCircularDependencies,
   type ScannedFile,
 } from "./scanner.js";
 
+import { resolveLocalImport } from "./resolver.js";
+import { analyzeTestCoverage } from "./testCoverage.js";
+
+import {
+  getGitInfo,
+  getFileDiff,
+  getUntrackedFilePreview,
+} from "./gitService.js";
+
 const app = express();
 const PORT = 5000;
 
 app.use(cors());
 app.use(express.json({ limit: "10kb" }));
-
-app.get("/api/health", (_req, res) => {
-  res.json({
-    success: true,
-    message: "Codebase X-Ray API is running",
-  });
-});
 
 const sourceExtensions = [
   ".ts",
@@ -47,63 +49,12 @@ function normalizePath(filePath: string): string {
   return filePath.replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
-function resolveLocalImport(
-  importerPath: string,
-  importPath: string,
-  sourceFileSet: Set<string>,
-): string[] {
-  // This resolver handles relative imports only.
-  // Package imports and unresolved aliases are intentionally excluded.
-  if (!importPath.startsWith(".")) {
-    return [];
-  }
-
-  const base = normalizePath(
-    path.posix.normalize(
-      path.posix.join(path.posix.dirname(importerPath), importPath),
-    ),
-  );
-
-  const candidates = new Set<string>();
-  
-  const explicitExtension = path.posix.extname(base);
-
-  const extensionlessBase = explicitExtension
-    ? base.slice(0, -explicitExtension.length)
-    : base;
-
-  const sourceEquivalentExtensions: Record<string, string[]> = {
-    ".js": [".ts", ".tsx", ".js", ".jsx"],
-    ".jsx": [".tsx", ".jsx", ".ts", ".js"],
-    ".mjs": [".mjs", ".js", ".ts"],
-    ".cjs": [".cjs", ".js", ".ts"],
-  };
-
-
-  // Exact path, including imports that specify an extension.
-  candidates.add(base);
-  
-  for (const extension of sourceEquivalentExtensions[explicitExtension] ?? []) {
-    candidates.add(extensionlessBase + extension);
-  }
-
-
-  // Extension resolution for imports such as "./utils".
-  if (!path.posix.extname(base)) {
-    for (const extension of sourceExtensions) {
-      candidates.add(base + extension);
-    }
-  }
-
-  // Directory entry points such as "./components".
-  for (const extension of sourceExtensions) {
-    candidates.add(path.posix.join(base, `index${extension}`));
-  }
-
-  return [...candidates].filter((candidate) =>
-    sourceFileSet.has(candidate),
-  );
-}
+app.get("/api/health", (_req, res) => {
+  res.json({
+    success: true,
+    message: "Codebase X-Ray API is running",
+  });
+});
 
 async function scanDirectory(directory: string) {
   const root = path.resolve(directory);
@@ -127,6 +78,7 @@ async function scanDirectory(directory: string) {
     .map(normalizePath);
 
   const sourceFileSet = new Set(sourceFiles);
+  const testCoverage = analyzeTestCoverage(sourceFiles);
 
   const files: ScannedFile[] = await Promise.all(
     sourceFiles.map(async (file): Promise<ScannedFile> => {
@@ -149,8 +101,8 @@ async function scanDirectory(directory: string) {
       const localDependencies = [
         ...new Set(
           imports.flatMap((item) =>
-            resolveLocalImport(file, item, sourceFileSet),
-          ),
+            resolveLocalImport(file, item, sourceFileSet)
+          )
         ),
       ];
 
@@ -160,13 +112,33 @@ async function scanDirectory(directory: string) {
         imports,
         localDependencies,
       };
-    }),
+    })
   );
 
   const dependencyCount = files.reduce(
     (total, file) => total + file.localDependencies.length,
-    0,
+    0
   );
+
+  const skippedFiles = files.filter((file) => file.skipped);
+  const analyzedCount = files.length - skippedFiles.length;
+
+  const extensionStats = files.reduce<Record<string, number>>(
+    (stats, file) => {
+      if (!file.skipped) {
+        stats[file.extension] =
+          (stats[file.extension] ?? 0) + 1;
+      }
+
+      return stats;
+    },
+    {}
+  );
+
+  const averageDependencies =
+    analyzedCount > 0
+      ? Number((dependencyCount / analyzedCount).toFixed(2))
+      : 0;
 
   const circularDependencies = findCircularDependencies(files);
 
@@ -174,22 +146,26 @@ async function scanDirectory(directory: string) {
     root,
     totalFiles: paths.length,
     analyzedFiles: files.length,
+    testCoverage,
     sourceFiles: files,
     dependencyCount,
     circularDependencies,
     circularDependencyCount: circularDependencies.length,
+    skippedFileCount: skippedFiles.length,
+    extensionStats,
+    averageDependencies,
   };
 }
 
+// Scan API
 app.post("/api/scan", async (req, res) => {
   const directory = req.body?.path;
 
   if (typeof directory !== "string" || !directory.trim()) {
-    res.status(400).json({
+    return res.status(400).json({
       success: false,
       message: "Please provide a project folder path.",
     });
-    return;
   }
 
   try {
@@ -198,7 +174,7 @@ app.post("/api/scan", async (req, res) => {
 
     const result = await scanDirectory(resolvedDirectory);
 
-    res.json({
+    return res.json({
       success: true,
       message: "Codebase scanned successfully",
       ...result,
@@ -209,15 +185,124 @@ app.post("/api/scan", async (req, res) => {
         ? error.message
         : "Unable to scan this directory";
 
-    res.status(400).json({
+    return res.status(400).json({
       success: false,
       message,
     });
   }
 });
 
+// Git information API
+app.get("/api/git-info", async (req, res) => {
+  try {
+    const repoPath = req.query.path;
+
+    if (typeof repoPath !== "string" || !repoPath.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path is required",
+      });
+    }
+
+    const resolvedPath = path.resolve(repoPath);
+    const gitInfo = await getGitInfo(resolvedPath);
+
+    return res.json({
+      success: true,
+      data: gitInfo,
+    });
+  } catch (error) {
+    console.error("Git info error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to read Git information",
+    });
+  }
+});
+
+// Git diff API
+app.get("/api/git-diff", async (req, res) => {
+  try {
+    const repoPath = req.query.path;
+    const filePath = req.query.file;
+
+    if (
+      typeof repoPath !== "string" ||
+      typeof filePath !== "string" ||
+      !repoPath.trim() ||
+      !filePath.trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path and file path are required",
+      });
+    }
+
+    const resolvedPath = path.resolve(repoPath);
+    const result = await getFileDiff(resolvedPath, filePath);
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Git diff error:", error);
+
+    return res.status(400).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Unable to fetch file diff",
+    });
+  }
+});
+
+// Untracked file preview API
+app.get("/api/git-preview", async (req, res) => {
+  try {
+    const repoPath = req.query.path;
+    const filePath = req.query.file;
+
+    if (
+      typeof repoPath !== "string" ||
+      typeof filePath !== "string" ||
+      !repoPath.trim() ||
+      !filePath.trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path and file path are required",
+      });
+    }
+
+    const resolvedPath = path.resolve(repoPath);
+
+    const result = await getUntrackedFilePreview(
+      resolvedPath,
+      filePath
+    );
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Git preview error:", error);
+
+    return res.status(400).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Unable to preview file",
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(
-    `Codebase X-Ray API running at http://localhost:${PORT}`,
+    `Codebase X-Ray API running at http://localhost:${PORT}`
   );
 });
