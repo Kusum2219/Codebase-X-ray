@@ -155,6 +155,36 @@ function App() {
   const [filePreview, setFilePreview] =
   useState<GitFilePreview | null>(null);
 
+  const [branches, setBranches] = useState<string[]>([]);
+const [currentBranch, setCurrentBranch] = useState("");
+const [newBranchName, setNewBranchName] = useState("");
+const [branchLoading, setBranchLoading] = useState(false);
+const [branchMessage, setBranchMessage] = useState("");
+const [branchError, setBranchError] = useState("");
+const [selectedCommit, setSelectedCommit] = useState("");
+const [commitDiff, setCommitDiff] = useState("");
+const [commitDiffLoading, setCommitDiffLoading] = useState(false);
+const [commitDiffError, setCommitDiffError] = useState("");
+const [selectedGitFiles, setSelectedGitFiles] = useState<string[]>([]);
+const [commitMessage, setCommitMessage] = useState("");
+
+const [gitActionLoading, setGitActionLoading] = useState(false);
+const [gitActionMessage, setGitActionMessage] = useState("");
+const [gitActionError, setGitActionError] = useState("");
+
+const [commitFiles, setCommitFiles] = useState<
+  {
+    file: string;
+    changes: string;
+    insertions: number;
+    deletions: number;
+  }[]
+>([]);
+
+const [commitFilesLoading, setCommitFilesLoading] = useState(false);
+const [commitFilesError, setCommitFilesError] = useState("");
+
+
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
 
@@ -215,6 +245,110 @@ async function loadGitInfo(repoPath: string) {
   }
 }
 
+function toggleGitFile(filePath: string) {
+  setSelectedGitFiles((previous) =>
+    previous.includes(filePath)
+      ? previous.filter((file) => file !== filePath)
+      : [...previous, filePath]
+  );
+}
+
+function toggleAllGitFiles(files: string[]) {
+  setSelectedGitFiles((previous) =>
+    files.every((file) => previous.includes(file))
+      ? previous.filter((file) => !files.includes(file))
+      : [...new Set([...previous, ...files])]
+  );
+}
+
+async function handleStageFiles() {
+  if (!selectedGitFiles.length) {
+    setGitActionError("Select at least one file to stage.");
+    return;
+  }
+
+  try {
+    setGitActionLoading(true);
+    setGitActionError("");
+    setGitActionMessage("");
+
+    await api.post("/git-stage", {
+      path: scanPath.trim(),
+      files: selectedGitFiles,
+    });
+
+    setGitActionMessage("Selected files staged successfully.");
+    setSelectedGitFiles([]);
+
+    await loadGitInfo(scanPath.trim());
+  } catch (error: any) {
+    setGitActionError(
+      error.response?.data?.message || "Unable to stage files."
+    );
+  } finally {
+    setGitActionLoading(false);
+  }
+}
+
+async function handleUnstageFiles() {
+  if (!selectedGitFiles.length) {
+    setGitActionError("Select at least one file to unstage.");
+    return;
+  }
+
+  try {
+    setGitActionLoading(true);
+    setGitActionError("");
+    setGitActionMessage("");
+
+    await api.post("/git-unstage", {
+      path: scanPath.trim(),
+      files: selectedGitFiles,
+    });
+
+    setGitActionMessage("Selected files unstaged successfully.");
+    setSelectedGitFiles([]);
+
+    await loadGitInfo(scanPath.trim());
+  } catch (error: any) {
+    setGitActionError(
+      error.response?.data?.message || "Unable to unstage files."
+    );
+  } finally {
+    setGitActionLoading(false);
+  }
+}
+
+async function handleCreateCommit() {
+  if (!commitMessage.trim()) {
+    setGitActionError("Please enter a commit message.");
+    return;
+  }
+
+  try {
+    setGitActionLoading(true);
+    setGitActionError("");
+    setGitActionMessage("");
+
+    await api.post("/git-commit", {
+      path: scanPath.trim(),
+      message: commitMessage.trim(),
+    });
+
+    setGitActionMessage("Commit created successfully.");
+    setCommitMessage("");
+    setSelectedGitFiles([]);
+
+    await loadGitInfo(scanPath.trim());
+  } catch (error: any) {
+    setGitActionError(
+      error.response?.data?.message || "Unable to create commit."
+    );
+  } finally {
+    setGitActionLoading(false);
+  }
+}
+
 async function loadFileDiff() {
   if (!selectedDiffFile) return;
 
@@ -270,6 +404,174 @@ async function loadUntrackedPreview() {
   }
 }
 
+async function loadBranches() {
+  try {
+    setBranchLoading(true);
+    setBranchError("");
+
+    const response = await api.get("/git-branches", {
+      params: { path: scanPath.trim() },
+    });
+
+    setBranches(response.data.branches);
+    setCurrentBranch(response.data.current);
+  } catch (error: any) {
+    setBranchError(
+      error.response?.data?.message || "Failed to load branches"
+    );
+  } finally {
+    setBranchLoading(false);
+  }
+}
+
+async function loadCommitDiff(commitHash: string) {
+  try {
+    setCommitDiffLoading(true);
+    setCommitDiffError("");
+    setCommitDiff("");
+
+    setSelectedCommit(commitHash);
+
+    const response = await api.get("/git-commit-diff", {
+      params: {
+        path: scanPath.trim(),
+        hash: commitHash,
+      },
+    });
+
+    setCommitDiff(response.data.data.diff);
+  } catch (error: any) {
+    setCommitDiffError(
+      error.response?.data?.message || "Unable to load commit diff"
+    );
+  } finally {
+    setCommitDiffLoading(false);
+  }
+}
+
+async function loadCommitHistory(page = 1) {
+  try {
+    setHistoryLoading(true);
+    setHistoryError("");
+
+    const response = await api.get("/git-history", {
+      params: {
+        path: scanPath.trim(),
+        page,
+        pageSize: 20,
+      },
+    });
+
+    const result = response.data.data;
+
+    setCommitHistory((previous) =>
+      page === 1
+        ? result.commits
+        : [...previous, ...result.commits]
+    );
+
+    setCommitPage(page);
+    setHasMoreCommits(result.hasMore);
+  } catch (error: any) {
+    setHistoryError(
+      error.response?.data?.message || "Unable to load commit history."
+    );
+  } finally {
+    setHistoryLoading(false);
+  }
+}
+
+async function loadCommitFiles(commitHash: string) {
+  try {
+    setCommitFilesLoading(true);
+    setCommitFilesError("");
+    setCommitFiles([]);
+
+    const response = await api.get("/git-commit-files", {
+      params: {
+        path: scanPath.trim(),
+        hash: commitHash,
+      },
+    });
+
+    setCommitFiles(response.data.data.files);
+  } catch (error: any) {
+    setCommitFilesError(
+      error.response?.data?.message || "Unable to load commit files."
+    );
+  } finally {
+    setCommitFilesLoading(false);
+  }
+}
+
+const [commitHistory, setCommitHistory] = useState<
+  {
+    hash: string;
+    message: string;
+    author: string;
+    date: string;
+  }[]
+>([]);
+
+const [commitPage, setCommitPage] = useState(1);
+const [hasMoreCommits, setHasMoreCommits] = useState(false);
+const [historyLoading, setHistoryLoading] = useState(false);
+const [historyError, setHistoryError] = useState("");
+
+async function handleCreateBranch() {
+  if (!newBranchName.trim()) {
+    setBranchError("Please enter a branch name");
+    return;
+  }
+
+  try {
+    setBranchLoading(true);
+    setBranchError("");
+    setBranchMessage("");
+
+    await api.post("/git-branches/create", {
+      path: scanPath.trim(),
+      branchName: newBranchName.trim(),
+    });
+
+    setBranchMessage(`Branch "${newBranchName.trim()}" created successfully`);
+    setNewBranchName("");
+
+    await loadBranches();
+  } catch (error: any) {
+    setBranchError(
+      error.response?.data?.message || "Failed to create branch"
+    );
+  } finally {
+    setBranchLoading(false);
+  }
+}
+
+async function handleSwitchBranch(branchName: string) {
+  if (branchName === currentBranch) return;
+
+  try {
+    setBranchLoading(true);
+    setBranchError("");
+    setBranchMessage("");
+
+    await api.post("/git-branches/switch", {
+      path: scanPath.trim(),
+      branchName,
+    });
+
+    setBranchMessage(`Switched to "${branchName}" successfully`);
+
+    await loadBranches();
+    await loadGitInfo(scanPath.trim());
+  } catch (error: any) {
+    setBranchError(
+      error.response?.data?.message || "Failed to switch branch"
+    );
+  } finally {
+    setBranchLoading(false);
+  }
+}
   async function handleScan() {
     if (!scanPath.trim()) {
       setScanError("Please enter a project folder path.");
@@ -294,6 +596,8 @@ setScanResult(result);
 
 if (result.success) {
   await loadGitInfo(scanPath.trim());
+  await loadBranches();
+  await loadCommitHistory(1);
 }
 if (result.success) {
   const normalizedPath = result.root.replace(/[\\/]+$/, "").toLowerCase();
@@ -975,6 +1279,8 @@ const diffSummary = useMemo(() => {
     <p className="mt-5 text-sm text-gray-400">
       This folder is not inside a Git repository.
     </p>
+
+    
   ) : (
     <>
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -985,6 +1291,158 @@ const diffSummary = useMemo(() => {
             {gitInfo.branch}
           </p>
         </div>
+
+        {gitInfo && (
+  <div className="mt-6 rounded-xl border border-slate-700 bg-slate-900/60 p-5">
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h3 className="text-lg font-semibold text-white">
+          Git Changes
+        </h3>
+        <p className="text-sm text-slate-400">
+          Select files to stage or unstage before committing.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => loadGitInfo(scanPath.trim())}
+        disabled={gitLoading || gitActionLoading}
+        className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+      >
+        Refresh
+      </button>
+    </div>
+
+    {gitInfo.changedFiles.length === 0 ? (
+      <p className="rounded-lg bg-slate-800/60 p-4 text-sm text-slate-400">
+        Working tree clean. No changed files.
+      </p>
+    ) : (
+      <>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-sm text-slate-400">
+            {gitInfo.changedFiles.length} changed file(s)
+          </span>
+
+          <button
+            type="button"
+            onClick={() =>
+              toggleAllGitFiles(
+                gitInfo.changedFiles.map((file) => file.path)
+              )
+            }
+            className="text-sm text-blue-400 hover:text-blue-300"
+          >
+            {gitInfo.changedFiles.every((file) =>
+              selectedGitFiles.includes(file.path)
+            )
+              ? "Deselect all"
+              : "Select all"}
+          </button>
+        </div>
+
+        <div className="max-h-72 space-y-2 overflow-y-auto">
+          {gitInfo.changedFiles.map((file) => {
+            const isStaged = Boolean(file.index.trim());
+            const isUnstaged = Boolean(file.workingTree.trim());
+
+            const status = isStaged
+              ? "Staged"
+              : isUnstaged
+                ? "Unstaged"
+                : "Changed";
+
+            return (
+              <label
+                key={file.path}
+                className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-800/50 p-3 hover:bg-slate-800"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={selectedGitFiles.includes(file.path)}
+                    onChange={() => toggleGitFile(file.path)}
+                    className="h-4 w-4 accent-blue-500"
+                  />
+
+                  <span className="truncate text-sm text-slate-200">
+                    {file.path}
+                  </span>
+                </div>
+
+                <span
+                  className={`shrink-0 rounded-md px-2 py-1 text-xs ${
+                    isStaged
+                      ? "bg-emerald-500/10 text-emerald-400"
+                      : "bg-amber-500/10 text-amber-400"
+                  }`}
+                >
+                  {status}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </>
+    )}
+
+    <div className="mt-4 flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={handleStageFiles}
+        disabled={gitActionLoading || selectedGitFiles.length === 0}
+        className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+      >
+        Stage Selected
+      </button>
+
+      <button
+        type="button"
+        onClick={handleUnstageFiles}
+        disabled={gitActionLoading || selectedGitFiles.length === 0}
+        className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+      >
+        Unstage Selected
+      </button>
+    </div>
+
+    <div className="mt-5 border-t border-slate-700 pt-5">
+      <label className="mb-2 block text-sm font-medium text-slate-200">
+        Commit Message
+      </label>
+
+      <input
+        type="text"
+        value={commitMessage}
+        onChange={(event) => setCommitMessage(event.target.value)}
+        placeholder="e.g. Add Git staging workflow"
+        className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-500 focus:border-blue-500"
+      />
+
+      <button
+        type="button"
+        onClick={handleCreateCommit}
+        disabled={gitActionLoading || !commitMessage.trim()}
+        className="mt-3 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+      >
+        {gitActionLoading ? "Processing..." : "Create Commit"}
+      </button>
+    </div>
+
+    {gitActionMessage && (
+      <p className="mt-3 text-sm text-emerald-400">
+        {gitActionMessage}
+      </p>
+    )}
+
+    {gitActionError && (
+      <p className="mt-3 text-sm text-red-400">
+        {gitActionError}
+      </p>
+    )}
+  </div>
+)}
 
         <div className="rounded-lg border border-white/[0.07] p-4">
           <p className="text-xs text-gray-500">Changed files</p>
@@ -1049,36 +1507,150 @@ const diffSummary = useMemo(() => {
         </div>
 
         <div>
-          <h3 className="mb-3 text-sm font-medium text-white">
-            Recent Commits
-          </h3>
+  <h3 className="mb-3 text-sm font-medium text-white">
+    Recent Commits
+  </h3>
 
-          {gitInfo.recentCommits.length === 0 ? (
-            <p className="text-xs text-gray-500">No commits found.</p>
-          ) : (
-            <div className="space-y-3">
-              {gitInfo.recentCommits.map((commit) => (
-                <div
-                  key={commit.hash}
-                  className="rounded-lg border border-white/[0.07] p-3"
-                >
-                  <p className="text-sm text-gray-200">{commit.message}</p>
-                  <p className="mt-2 text-xs text-gray-500">
-                    {commit.author} ·{" "}
-                    {new Date(commit.date).toLocaleString()}
-                  </p>
-                  <p className="mt-1 font-mono text-[10px] text-gray-600">
-                    {commit.hash.slice(0, 8)}
-                  </p>
-                </div>
-              ))}
-            </div>
+  {commitHistory.length === 0 && !historyLoading ? (
+    <p className="text-xs text-gray-500">No commits found.</p>
+  ) : (
+    <div className="space-y-3">
+      {commitHistory.map((commit) => (
+        <div
+          key={commit.hash}
+          className={`w-full rounded-lg border p-3 transition ${
+            selectedCommit === commit.hash
+              ? "border-sky-500 bg-sky-500/10"
+              : "border-white/[0.07] hover:border-sky-500/50 hover:bg-white/[0.03]"
+          }`}
+        >
+          <p className="text-sm text-gray-200">{commit.message}</p>
+
+          <p className="mt-2 text-xs text-gray-500">
+            {commit.author} · {new Date(commit.date).toLocaleString()}
+          </p>
+
+          <p className="mt-1 font-mono text-[10px] text-gray-600">
+            {commit.hash.slice(0, 8)}
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => loadCommitDiff(commit.hash)}
+              disabled={commitDiffLoading}
+              className="text-xs text-sky-400 hover:text-sky-300"
+            >
+              View commit diff
+            </button>
+
+            <button
+              type="button"
+              onClick={() => loadCommitFiles(commit.hash)}
+              disabled={commitFilesLoading}
+              className="text-xs text-sky-400 hover:text-sky-300"
+            >
+              View changed files
+            </button>
+          </div>
+
+          {selectedCommit === commit.hash && (
+            <p className="mt-2 text-xs text-sky-400">
+              Selected commit
+            </p>
           )}
         </div>
+      ))}
+    </div>
+  )}
+
+  {historyError && (
+    <p className="mt-3 text-xs text-red-400">{historyError}</p>
+  )}
+
+  {historyLoading && (
+    <p className="mt-3 text-xs text-gray-400">
+      Loading commit history...
+    </p>
+  )}
+
+  {hasMoreCommits && !historyLoading && (
+    <button
+      type="button"
+      onClick={() => loadCommitHistory(commitPage + 1)}
+      className="mt-3 rounded-lg border border-white/10 px-3 py-2 text-xs text-sky-400 hover:bg-white/[0.04]"
+    >
+      Load More Commits
+    </button>
+  )}
+
+  {commitFilesError && (
+    <p className="mt-3 text-xs text-red-400">{commitFilesError}</p>
+  )}
+
+  {commitFilesLoading && (
+    <p className="mt-3 text-xs text-gray-400">
+      Loading changed files...
+    </p>
+  )}
+
+  {commitFiles.length > 0 && (
+    <div className="mt-4 rounded-lg border border-white/[0.07] p-3">
+      <h4 className="mb-3 text-xs font-semibold text-white">
+        Changed Files
+      </h4>
+
+      <div className="space-y-2">
+        {commitFiles.map((file) => (
+          <div
+            key={file.file}
+            className="flex flex-wrap justify-between gap-2 text-xs"
+          >
+            <span className="break-all text-gray-300">{file.file}</span>
+            <span className="text-gray-500">
+              +{file.insertions} / -{file.deletions}
+            </span>
+          </div>
+        ))}
       </div>
+    </div>
+  )}
+</div>
+        </div>
     </>
   )}
 </section>
+
+{selectedCommit && (
+  <section className="mt-5 rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h3 className="text-sm font-semibold text-white">
+          Commit Changes
+        </h3>
+        <p className="mt-1 font-mono text-xs text-slate-500">
+          {selectedCommit}
+        </p>
+      </div>
+
+      <span className="text-xs text-sky-400">Commit Diff</span>
+    </div>
+
+    {commitDiffLoading ? (
+      <p className="mt-5 text-sm text-slate-400">
+        Loading commit changes...
+      </p>
+    ) : commitDiffError ? (
+      <p className="mt-5 text-sm text-red-400">
+        {commitDiffError}
+      </p>
+    ) : (
+      <pre className="mt-4 max-h-[500px] overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-6 text-slate-300">
+        <code>{commitDiff}</code>
+      </pre>
+    )}
+  </section>
+)}
 
 <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 space-y-5">
   <div>
@@ -1118,6 +1690,72 @@ const diffSummary = useMemo(() => {
   );
 })}
     </select>
+
+    <section className="branch-management">
+  <div className="section-header">
+    <div>
+      <h2>Branch Management</h2>
+      <p>Manage your repository branches</p>
+    </div>
+
+    <button
+      onClick={loadBranches}
+      disabled={branchLoading || !scanPath.trim()}
+    >
+      {branchLoading ? "Loading..." : "Refresh"}
+    </button>
+  </div>
+
+  <div className="current-branch">
+    <span>Current Branch</span>
+    <strong>{currentBranch || "Not loaded"}</strong>
+  </div>
+
+  <div className="create-branch">
+    <input
+      type="text"
+      placeholder="Enter new branch name"
+      value={newBranchName}
+      onChange={(e) => setNewBranchName(e.target.value)}
+    />
+
+    <button
+      onClick={handleCreateBranch}
+      disabled={branchLoading || !newBranchName.trim()}
+    >
+      Create Branch
+    </button>
+  </div>
+
+  {branchMessage && <p className="success-message">{branchMessage}</p>}
+  {branchError && <p className="error-message">{branchError}</p>}
+
+  <div className="branch-list">
+    <h3>Local Branches ({branches.length})</h3>
+
+    {branches.map((branch) => (
+      <div className="branch-item" key={branch}>
+        <span>
+          {branch}
+          {branch === currentBranch && (
+            <small className="active-branch">Current</small>
+          )}
+        </span>
+
+        <button
+          onClick={() => handleSwitchBranch(branch)}
+          disabled={branchLoading || branch === currentBranch}
+        >
+          {branch === currentBranch ? "Active" : "Switch"}
+        </button>
+      </div>
+    ))}
+
+    {branches.length === 0 && (
+      <p>No branches loaded. Click Refresh.</p>
+    )}
+  </div>
+</section>
 
     {(() => {
   const selectedFile = gitInfo?.changedFiles.find(
