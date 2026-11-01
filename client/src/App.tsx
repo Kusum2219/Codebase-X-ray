@@ -494,7 +494,18 @@ async function loadCommitFiles(commitHash: string) {
       },
     });
 
-    setCommitFiles(response.data.data.files);
+   setCommitFiles(
+  response.data.data.files.map((file: {
+    status: string;
+    oldPath: string | null;
+    filePath: string;
+  }) => ({
+    file: file.filePath,
+    changes: file.status,
+    insertions: 0,
+    deletions: 0,
+  }))
+);
   } catch (error: any) {
     setCommitFilesError(
       error.response?.data?.message || "Unable to load commit files."
