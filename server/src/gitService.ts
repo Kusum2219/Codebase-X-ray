@@ -402,9 +402,14 @@ export async function unstageFiles(
   filePaths: string[]
 ) {
   const validatedPaths = await validateGitFilePaths(repoPath, filePaths);
-  const git = simpleGit(repoPath);
 
-  await git.reset(["HEAD", "--", ...validatedPaths]);
+  const git = simpleGit(repoPath);
+  const root = await git.revparse(["--show-toplevel"]);
+  const repoRoot = path.resolve(root.trim());
+
+  const rootGit = simpleGit(repoRoot);
+
+  await rootGit.reset(["HEAD", "--", ...validatedPaths]);
 
   return {
     unstagedFiles: validatedPaths,
