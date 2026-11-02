@@ -155,6 +155,10 @@ function App() {
   const [filePreview, setFilePreview] =
   useState<GitFilePreview | null>(null);
 
+  const [pushLoading, setPushLoading] = useState(false);
+const [pushMessage, setPushMessage] = useState("");
+const [pushError, setPushError] = useState("");
+
   const [branches, setBranches] = useState<string[]>([]);
 const [currentBranch, setCurrentBranch] = useState("");
 const [newBranchName, setNewBranchName] = useState("");
@@ -583,6 +587,40 @@ async function handleSwitchBranch(branchName: string) {
     setBranchLoading(false);
   }
 }
+
+async function handlePush() {
+  if (!scanPath.trim()) return;
+
+  const confirmed = window.confirm(
+    "Are you sure you want to push your commits to the remote repository?"
+  );
+
+  if (!confirmed) return;
+
+  try {
+    setPushLoading(true);
+    setPushMessage("");
+    setPushError("");
+
+    const response = await api.post("/git-push", {
+      path: scanPath.trim(),
+      confirmed: true,
+    });
+
+    setPushMessage(
+      response.data.data.message || "Changes pushed successfully."
+    );
+
+    await loadGitInfo(scanPath.trim());
+  } catch (error: any) {
+    setPushError(
+      error.response?.data?.message || "Failed to push changes."
+    );
+  } finally {
+    setPushLoading(false);
+  }
+}
+
   async function handleScan() {
     if (!scanPath.trim()) {
       setScanError("Please enter a project folder path.");
@@ -1454,6 +1492,24 @@ const diffSummary = useMemo(() => {
     )}
   </div>
 )}
+
+<div className="mt-4 flex flex-wrap items-center gap-3">
+  <button
+    onClick={handlePush}
+   disabled={pushLoading || !scanPath.trim()}
+    className="rounded-lg bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+  >
+    {pushLoading ? "Pushing..." : "Push to Remote"}
+  </button>
+
+  {pushMessage && (
+    <p className="text-sm text-green-600">{pushMessage}</p>
+  )}
+
+  {pushError && (
+    <p className="text-sm text-red-600">{pushError}</p>
+  )}
+</div>
 
         <div className="rounded-lg border border-white/[0.07] p-4">
           <p className="text-xs text-gray-500">Changed files</p>
