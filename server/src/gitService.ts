@@ -382,9 +382,14 @@ export async function stageFiles(
   filePaths: string[]
 ) {
   const validatedPaths = await validateGitFilePaths(repoPath, filePaths);
-  const git = simpleGit(repoPath);
 
-  await git.add(validatedPaths);
+  const git = simpleGit(repoPath);
+  const root = await git.revparse(["--show-toplevel"]);
+  const repoRoot = path.resolve(root.trim());
+
+  const rootGit = simpleGit(repoRoot);
+
+  await rootGit.add(validatedPaths);
 
   return {
     stagedFiles: validatedPaths,
