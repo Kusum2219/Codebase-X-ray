@@ -1,0 +1,10 @@
+Codebase X-Ray Git Workflow Test
+
+This file is created to test:
+- Git status detection
+- File staging
+- File unstaging
+- Commit creation
+- Commit history
+- Changed files
+- File diff
