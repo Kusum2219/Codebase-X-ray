@@ -159,6 +159,10 @@ function App() {
 const [pushMessage, setPushMessage] = useState("");
 const [pushError, setPushError] = useState("");
 
+const [pullLoading, setPullLoading] = useState(false);
+const [pullMessage, setPullMessage] = useState("");
+const [pullError, setPullError] = useState("");
+
   const [branches, setBranches] = useState<string[]>([]);
 const [currentBranch, setCurrentBranch] = useState("");
 const [newBranchName, setNewBranchName] = useState("");
@@ -618,6 +622,39 @@ async function handlePush() {
     );
   } finally {
     setPushLoading(false);
+  }
+}
+
+async function handlePull() {
+  if (!scanPath.trim()) return;
+
+  const confirmed = window.confirm(
+    "Pull latest changes from the remote repository?"
+  );
+
+  if (!confirmed) return;
+
+  try {
+    setPullLoading(true);
+    setPullMessage("");
+    setPullError("");
+
+    const response = await api.post("/git-pull", {
+      path: scanPath.trim(),
+      confirmed: true,
+    });
+
+    setPullMessage(
+      response.data.data.message || "Changes pulled successfully."
+    );
+
+    await loadGitInfo(scanPath.trim());
+  } catch (error: any) {
+    setPullError(
+      error.response?.data?.message || "Failed to pull changes."
+    );
+  } finally {
+    setPullLoading(false);
   }
 }
 
@@ -1508,6 +1545,25 @@ const diffSummary = useMemo(() => {
 
   {pushError && (
     <p className="text-sm text-red-600">{pushError}</p>
+  )}
+</div>
+
+
+<div className="mt-4 flex flex-wrap items-center gap-3">
+  <button
+    onClick={handlePull}
+    disabled={pullLoading || !scanPath.trim()}
+    className="rounded-lg bg-indigo-600 px-4 py-2 text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+  >
+    {pullLoading ? "Pulling..." : "Pull from Remote"}
+  </button>
+
+  {pullMessage && (
+    <p className="text-sm text-green-600">{pullMessage}</p>
+  )}
+
+  {pullError && (
+    <p className="text-sm text-red-600">{pullError}</p>
   )}
 </div>
 
