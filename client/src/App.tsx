@@ -175,6 +175,23 @@ const [commitDiffLoading, setCommitDiffLoading] = useState(false);
 const [commitDiffError, setCommitDiffError] = useState("");
 const [selectedGitFiles, setSelectedGitFiles] = useState<string[]>([]);
 const [commitMessage, setCommitMessage] = useState("");
+const [remoteStatus, setRemoteStatus] = useState<any>(null);
+const [remoteStatusLoading, setRemoteStatusLoading] = useState(false);
+const [remoteStatusError, setRemoteStatusError] = useState("");
+
+const [fetchLoading, setFetchLoading] = useState(false);
+const [fetchMessage, setFetchMessage] = useState("");
+const [fetchError, setFetchError] = useState("");
+
+const [stashes, setStashes] = useState<
+  { ref: string; message: string }[]
+>([]);
+
+const [stashMessage, setStashMessage] = useState("");
+const [stashLoading, setStashLoading] = useState(false);
+const [stashActionLoading, setStashActionLoading] = useState(false);
+const [stashSuccess, setStashSuccess] = useState("");
+const [stashError, setStashError] = useState("");
 
 const [gitActionLoading, setGitActionLoading] = useState(false);
 const [gitActionMessage, setGitActionMessage] = useState("");
@@ -655,6 +672,153 @@ async function handlePull() {
     );
   } finally {
     setPullLoading(false);
+  }
+}
+
+async function loadStashes(path: string) {
+  if (!path.trim()) return;
+
+  try {
+    setStashLoading(true);
+    setStashError("");
+
+    const response = await api.get("/git-stashes", {
+      params: { path: path.trim() },
+    });
+
+    setStashes(response.data.data.stashes || []);
+  } catch (error: any) {
+    setStashError(
+      error.response?.data?.message || "Failed to load stashes."
+    );
+  } finally {
+    setStashLoading(false);
+  }
+}
+
+async function handleCreateStash() {
+  if (!scanPath.trim()) return;
+
+  try {
+    setStashActionLoading(true);
+    setStashSuccess("");
+    setStashError("");
+
+    const response = await api.post("/git-stash", {
+      path: scanPath.trim(),
+      message: stashMessage.trim(),
+    });
+
+    setStashSuccess(response.data.data.message);
+    setStashMessage("");
+
+    await loadStashes(scanPath);
+    await loadGitInfo(scanPath);
+  } catch (error: any) {
+    setStashError(
+      error.response?.data?.message || "Failed to create stash."
+    );
+  } finally {
+    setStashActionLoading(false);
+  }
+}
+
+async function handleStashAction(
+  action: "apply" | "pop" | "drop",
+  stashRef: string
+) {
+  if (!scanPath.trim()) return;
+
+  const labels = {
+    apply: "apply this stash",
+    pop: "apply and remove this stash",
+    drop: "permanently delete this stash",
+  };
+
+  if (!window.confirm(`Are you sure you want to ${labels[action]}?`)) {
+    return;
+  }
+
+  try {
+    setStashActionLoading(true);
+    setStashSuccess("");
+    setStashError("");
+
+    let response;
+
+    if (action === "apply" || action === "pop") {
+      response = await api.post("/git-stash-apply", {
+        path: scanPath.trim(),
+        stashRef,
+        pop: action === "pop",
+      });
+    } else {
+      response = await api.post("/git-stash-drop", {
+        path: scanPath.trim(),
+        stashRef,
+      });
+    }
+
+    setStashSuccess(response.data.data.message);
+
+    await loadStashes(scanPath);
+    await loadGitInfo(scanPath);
+  } catch (error: any) {
+    setStashError(
+      error.response?.data?.message ||
+        `Failed to ${action} stash.`
+    );
+  } finally {
+    setStashActionLoading(false);
+  }
+}
+
+async function loadRemoteStatus(path: string) {
+  if (!path.trim()) return;
+
+  try {
+    setRemoteStatusLoading(true);
+    setRemoteStatusError("");
+
+    const response = await api.get("/git-remote-status", {
+      params: { path: path.trim() },
+    });
+
+    setRemoteStatus(response.data.data);
+  } catch (error: any) {
+    setRemoteStatus(null);
+    setRemoteStatusError(
+      error.response?.data?.message || "Failed to fetch remote status."
+    );
+  } finally {
+    setRemoteStatusLoading(false);
+  }
+}
+
+async function handleFetchLatest() {
+  if (!scanPath.trim()) return;
+
+  try {
+    setFetchLoading(true);
+    setFetchMessage("");
+    setFetchError("");
+
+    const response = await api.post("/git-fetch", {
+      path: scanPath.trim(),
+    });
+
+    setFetchMessage(
+      response.data.data.message || "Remote information fetched successfully."
+    );
+
+    await loadRemoteStatus(scanPath.trim());
+    await loadGitInfo(scanPath.trim());
+  } catch (error: any) {
+    setFetchError(
+      error.response?.data?.message || "Failed to fetch remote changes."
+    );
+  } finally {
+    setFetchLoading(false);
   }
 }
 
@@ -1565,6 +1729,242 @@ const diffSummary = useMemo(() => {
   {pullError && (
     <p className="text-sm text-red-600">{pullError}</p>
   )}
+</div>
+
+{/* Remote Status */}
+<div className="mt-6 rounded-xl border border-white/[0.07] bg-white/[0.02] p-5">
+  <div className="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h3 className="text-sm font-semibold text-white">Remote Status</h3>
+      <p className="mt-1 text-xs text-gray-500">
+        Track your local branch against the remote repository.
+      </p>
+    </div>
+    
+
+    <button
+      type="button"
+      onClick={() => loadRemoteStatus(scanPath)}
+      disabled={remoteStatusLoading || !scanPath.trim()}
+      className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-300 transition hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {remoteStatusLoading ? "Refreshing..." : "Refresh Status"}
+    </button>
+  </div>
+
+  {remoteStatusError && (
+    <p className="mt-4 text-sm text-red-400">{remoteStatusError}</p>
+  )}
+
+  {!remoteStatus && !remoteStatusLoading && !remoteStatusError && (
+    <p className="mt-4 text-xs text-gray-500">
+      Click Refresh Status to load repository information.
+    </p>
+  )}
+
+  {remoteStatus && (
+    <>
+      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-lg border border-white/[0.07] p-3">
+          <p className="text-xs text-gray-500">Current Branch</p>
+          <p className="mt-2 break-all text-sm font-semibold text-white">
+            {remoteStatus.branch || "No branch"}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-white/[0.07] p-3">
+          <p className="text-xs text-gray-500">Ahead</p>
+          <p className="mt-2 text-2xl font-semibold text-amber-300">
+            {remoteStatus.ahead}
+          </p>
+          <p className="text-xs text-gray-500">Commits to push</p>
+        </div>
+
+        <div className="rounded-lg border border-white/[0.07] p-3">
+          <p className="text-xs text-gray-500">Behind</p>
+          <p className="mt-2 text-2xl font-semibold text-sky-300">
+            {remoteStatus.behind}
+          </p>
+          <p className="text-xs text-gray-500">Commits to pull</p>
+        </div>
+
+        <div className="rounded-lg border border-white/[0.07] p-3">
+          <p className="text-xs text-gray-500">Working Tree</p>
+          <p className={`mt-2 text-sm font-semibold ${
+            remoteStatus.isClean ? "text-emerald-400" : "text-amber-300"
+          }`}>
+            {remoteStatus.isClean ? "Clean" : "Changes detected"}
+          </p>
+        </div>
+      </div>
+
+      <button
+  type="button"
+  onClick={handleFetchLatest}
+  disabled={fetchLoading || !scanPath.trim()}
+  className="rounded-lg bg-sky-600 px-3 py-2 text-xs text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+>
+  {fetchLoading ? "Fetching..." : "Fetch Latest"}
+</button>
+{fetchMessage && (
+  <p className="mt-3 text-sm text-green-400">{fetchMessage}</p>
+)}
+
+{fetchError && (
+  <p className="mt-3 text-sm text-red-400">{fetchError}</p>
+)}
+
+      <div className="mt-4 border-t border-white/[0.07] pt-4">
+        <p className="mb-2 text-xs font-medium text-gray-400">Remotes</p>
+
+        {remoteStatus.remotes.length === 0 ? (
+          <p className="text-xs text-amber-300">No remote configured.</p>
+        ) : (
+          <div className="space-y-2">
+            {remoteStatus.remotes.map((remote: any) => (
+              <div
+                key={remote.name}
+                className="rounded-lg bg-white/[0.03] p-3"
+              >
+                <p className="text-xs font-semibold text-white">
+                  {remote.name}
+                </p>
+                <p className="mt-1 break-all text-xs text-gray-500">
+                  Fetch: {remote.fetchUrl}
+                </p>
+                <p className="mt-1 break-all text-xs text-gray-500">
+                  Push: {remote.pushUrl}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <p className="mt-3 text-xs text-gray-500">
+          Tracking branch: {remoteStatus.tracking || "No upstream configured"}
+        </p>
+      </div>
+    </>
+  )}
+</div>
+
+<div className="rounded-xl border border-gray-700 bg-gray-900 p-5 space-y-5">
+  <div className="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h3 className="text-lg font-semibold text-white">
+        Git Stash Management
+      </h3>
+      <p className="mt-1 text-sm text-gray-400">
+        Temporarily save and restore your uncommitted changes.
+      </p>
+    </div>
+
+    <button
+      onClick={() => loadStashes(scanPath)}
+      disabled={stashLoading || !scanPath.trim()}
+      className="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-200 hover:bg-gray-800 disabled:opacity-50"
+    >
+      {stashLoading ? "Refreshing..." : "Refresh Stashes"}
+    </button>
+  </div>
+
+  <div className="flex flex-col gap-3 sm:flex-row">
+    <input
+      type="text"
+      value={stashMessage}
+      onChange={(e) => setStashMessage(e.target.value)}
+      placeholder="Enter stash message (optional)"
+      className="min-w-0 flex-1 rounded-lg border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-white outline-none focus:border-blue-500"
+    />
+
+    <button
+      onClick={handleCreateStash}
+      disabled={stashActionLoading || !scanPath.trim()}
+      className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+    >
+      {stashActionLoading ? "Please wait..." : "Stash Changes"}
+    </button>
+  </div>
+
+  {stashSuccess && (
+    <p className="rounded-lg border border-green-800 bg-green-950/40 p-3 text-sm text-green-400">
+      {stashSuccess}
+    </p>
+  )}
+
+  {stashError && (
+    <p className="rounded-lg border border-red-800 bg-red-950/40 p-3 text-sm text-red-400">
+      {stashError}
+    </p>
+  )}
+
+  <div className="space-y-3">
+    <div className="flex items-center justify-between">
+      <h4 className="font-medium text-white">
+        Saved Stashes
+      </h4>
+      <span className="rounded-full bg-gray-800 px-3 py-1 text-xs text-gray-300">
+        {stashes.length} total
+      </span>
+    </div>
+
+    {stashLoading && stashes.length === 0 ? (
+      <p className="py-6 text-center text-sm text-gray-400">
+        Loading stashes...
+      </p>
+    ) : stashes.length === 0 ? (
+      <div className="rounded-lg border border-dashed border-gray-700 py-8 text-center">
+        <p className="text-sm text-gray-300">No stashes found</p>
+        <p className="mt-1 text-xs text-gray-500">
+          Your saved changes will appear here.
+        </p>
+      </div>
+    ) : (
+      <div className="space-y-3">
+        {stashes.map((stash) => (
+          <div
+            key={stash.ref}
+            className="flex flex-col gap-4 rounded-lg border border-gray-700 bg-gray-800/60 p-4 lg:flex-row lg:items-center lg:justify-between"
+          >
+            <div className="min-w-0">
+              <p className="font-medium text-blue-400">
+                {stash.ref}
+              </p>
+              <p className="mt-1 break-words text-sm text-gray-300">
+                {stash.message}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => handleStashAction("apply", stash.ref)}
+                disabled={stashActionLoading}
+                className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                Apply
+              </button>
+
+              <button
+                onClick={() => handleStashAction("pop", stash.ref)}
+                disabled={stashActionLoading}
+                className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                Pop
+              </button>
+
+              <button
+                onClick={() => handleStashAction("drop", stash.ref)}
+                disabled={stashActionLoading}
+                className="rounded-md bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                Drop
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
 </div>
 
         <div className="rounded-lg border border-white/[0.07] p-4">

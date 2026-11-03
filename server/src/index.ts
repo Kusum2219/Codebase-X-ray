@@ -36,6 +36,7 @@ pushChanges,
 pullChanges,
 setBranchUpstream,
 publishBranch,
+fetchRemoteChanges 
 } from "./gitService.js";
 const app = express();
 const PORT = 5000;
@@ -854,6 +855,34 @@ app.post("/api/git-publish-branch", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error instanceof Error ? error.message : "Failed to publish branch",
+    });
+  }
+});
+
+app.post("/api/git-fetch", async (req, res) => {
+  try {
+    const { path } = req.body;
+
+    if (typeof path !== "string" || !path.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path is required",
+      });
+    }
+
+    const result = await fetchRemoteChanges(path.trim());
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch remote changes",
     });
   }
 });

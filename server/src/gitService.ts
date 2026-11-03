@@ -593,6 +593,30 @@ export async function dropStash(
     message: "Stash deleted successfully",
   };
 }
+
+export async function fetchRemoteChanges(repoPath: string) {
+  const git = simpleGit(repoPath);
+
+  if (!(await git.checkIsRepo())) {
+    throw new Error("Not a Git repository");
+  }
+
+  const status = await git.status();
+
+  if (!status.tracking) {
+    throw new Error(
+      "Current branch has no upstream. Set an upstream remote first."
+    );
+  }
+
+  await git.fetch();
+
+  return {
+    branch: status.current,
+    message: "Remote information fetched successfully",
+  };
+}
+
 export async function getRemoteStatus(repoPath: string) {
   const git = simpleGit(repoPath);
 
@@ -765,3 +789,4 @@ export async function publishBranch(
     message: "Branch published successfully",
   };
 }
+
