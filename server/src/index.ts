@@ -36,7 +36,24 @@ pushChanges,
 pullChanges,
 setBranchUpstream,
 publishBranch,
-fetchRemoteChanges 
+fetchRemoteChanges,
+mergeBranch,
+getMergeStatus,
+resolveMergeConflict,
+completeMerge,
+abortMerge,
+getGitTags,
+createGitTag,
+deleteGitTag,
+pushGitTag,
+pushAllGitTags,
+cherryPickCommit,
+revertCommit,
+getGitOperationStatus,
+continueCherryPick,
+continueRevert,
+abortCherryPick,
+abortRevert,
 } from "./gitService.js";
 const app = express();
 const PORT = 5000;
@@ -497,11 +514,7 @@ app.get("/api/git-preview", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(
-    `Codebase X-Ray API running at http://localhost:${PORT}`
-  );
-});
+
 app.post("/api/git-stage", async (req, res) => {
   try {
     const { path: repoPath, files } = req.body;
@@ -885,4 +898,526 @@ app.post("/api/git-fetch", async (req, res) => {
           : "Failed to fetch remote changes",
     });
   }
+});
+
+
+// Start a merge
+app.post("/api/git-merge", async (req, res) => {
+  try {
+    const { path: repoPath, branchName, confirmed } = req.body;
+
+    if (
+      typeof repoPath !== "string" ||
+      !repoPath.trim() ||
+      typeof branchName !== "string" ||
+      !branchName.trim() ||
+      confirmed !== true
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path, branch name and merge confirmation are required",
+      });
+    }
+
+    const result = await mergeBranch(repoPath, branchName);
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : "Merge failed",
+    });
+  }
+});
+
+// Get merge status and conflicted files
+app.get("/api/git-merge-status", async (req, res) => {
+  try {
+    const repoPath = req.query.path;
+
+    if (typeof repoPath !== "string" || !repoPath.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path is required",
+      });
+    }
+
+    const result = await getMergeStatus(repoPath);
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : "Failed to fetch merge status",
+    });
+  }
+});
+
+// Resolve a conflicted file
+app.post("/api/git-merge/resolve", async (req, res) => {
+  try {
+    const { path: repoPath, filePath, strategy } = req.body;
+
+    if (
+      typeof repoPath !== "string" ||
+      !repoPath.trim() ||
+      typeof filePath !== "string" ||
+      !filePath.trim() ||
+      !["ours", "theirs", "manual"].includes(strategy)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path, file path and valid resolution strategy are required",
+      });
+    }
+
+    const result = await resolveMergeConflict(
+      repoPath,
+      filePath,
+      strategy
+    );
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : "Failed to resolve conflict",
+    });
+  }
+});
+
+// Complete merge
+app.post("/api/git-merge/complete", async (req, res) => {
+  try {
+    const { path: repoPath, confirmed } = req.body;
+
+    if (
+      typeof repoPath !== "string" ||
+      !repoPath.trim() ||
+      confirmed !== true
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path and merge confirmation are required",
+      });
+    }
+
+    const result = await completeMerge(repoPath);
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : "Failed to complete merge",
+    });
+  }
+});
+
+// Abort merge
+app.post("/api/git-merge/abort", async (req, res) => {
+  try {
+    const { path: repoPath, confirmed } = req.body;
+
+    if (
+      typeof repoPath !== "string" ||
+      !repoPath.trim() ||
+      confirmed !== true
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path and abort confirmation are required",
+      });
+    }
+
+    const result = await abortMerge(repoPath);
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : "Failed to abort merge",
+    });
+  }
+});
+
+// ==================== GIT TAG API ====================
+
+// Get all tags
+app.get("/api/git-tags", async (req, res) => {
+  try {
+    const repoPath = req.query.path;
+
+    if (typeof repoPath !== "string" || !repoPath.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path is required",
+      });
+    }
+
+    const result = await getGitTags(repoPath);
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message:
+        error instanceof Error ? error.message : "Failed to load tags",
+    });
+  }
+});
+
+// Create tag
+app.post("/api/git-tags/create", async (req, res) => {
+  try {
+    const {
+      path: repoPath,
+      tagName,
+      type,
+      message,
+      target,
+    } = req.body;
+
+    if (
+      typeof repoPath !== "string" ||
+      !repoPath.trim() ||
+      typeof tagName !== "string" ||
+      !tagName.trim() ||
+      !["lightweight", "annotated"].includes(type) ||
+      (message !== undefined && typeof message !== "string") ||
+      (target !== undefined && typeof target !== "string")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid repository path, tag name and tag type are required",
+      });
+    }
+
+    const result = await createGitTag(
+      repoPath,
+      tagName,
+      type,
+      message ?? "",
+      target ?? "HEAD"
+    );
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message:
+        error instanceof Error ? error.message : "Failed to create tag",
+    });
+  }
+});
+
+// Delete local tag
+app.post("/api/git-tags/delete", async (req, res) => {
+  try {
+    const { path: repoPath, tagName, confirmed } = req.body;
+
+    if (
+      typeof repoPath !== "string" ||
+      !repoPath.trim() ||
+      typeof tagName !== "string" ||
+      !tagName.trim() ||
+      confirmed !== true
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path, tag name and confirmation are required",
+      });
+    }
+
+    const result = await deleteGitTag(repoPath, tagName);
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message:
+        error instanceof Error ? error.message : "Failed to delete tag",
+    });
+  }
+});
+
+// Push individual tag
+app.post("/api/git-tags/push", async (req, res) => {
+  try {
+    const {
+      path: repoPath,
+      tagName,
+      remote,
+      confirmed,
+    } = req.body;
+
+    if (
+      typeof repoPath !== "string" ||
+      !repoPath.trim() ||
+      typeof tagName !== "string" ||
+      !tagName.trim() ||
+      (remote !== undefined && typeof remote !== "string") ||
+      confirmed !== true
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path, tag name and confirmation are required",
+      });
+    }
+
+    const result = await pushGitTag(
+      repoPath,
+      tagName,
+      remote ?? "origin"
+    );
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message:
+        error instanceof Error ? error.message : "Failed to push tag",
+    });
+  }
+});
+
+// Push all tags
+app.post("/api/git-tags/push-all", async (req, res) => {
+  try {
+    const { path: repoPath, remote, confirmed } = req.body;
+
+    if (
+      typeof repoPath !== "string" ||
+      !repoPath.trim() ||
+      (remote !== undefined && typeof remote !== "string") ||
+      confirmed !== true
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path and explicit confirmation are required",
+      });
+    }
+
+    const result = await pushAllGitTags(
+      repoPath,
+      remote ?? "origin"
+    );
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message:
+        error instanceof Error ? error.message : "Failed to push tags",
+    });
+  }
+});
+// ==========================================
+// CHERRY-PICK & REVERT ROUTES
+// ==========================================
+
+// Get current operation status
+app.get("/api/git-operation-status", async (req, res) => {
+  try {
+    const repoPath = req.query.path;
+
+    if (typeof repoPath !== "string" || !repoPath.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path is required",
+      });
+    }
+
+    const result = await getGitOperationStatus(repoPath.trim());
+
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : "Failed to get operation status",
+    });
+  }
+});
+
+// Cherry-pick a commit
+app.post("/api/git-cherry-pick", async (req, res) => {
+  try {
+    const { path: repoPath, commitHash } = req.body;
+
+    if (
+      typeof repoPath !== "string" ||
+      !repoPath.trim() ||
+      typeof commitHash !== "string" ||
+      !commitHash.trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path and commit hash are required",
+      });
+    }
+
+    const result = await cherryPickCommit(repoPath.trim(), commitHash);
+
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : "Cherry-pick failed",
+    });
+  }
+});
+
+// Revert a commit
+app.post("/api/git-revert", async (req, res) => {
+  try {
+    const { path: repoPath, commitHash } = req.body;
+
+    if (
+      typeof repoPath !== "string" ||
+      !repoPath.trim() ||
+      typeof commitHash !== "string" ||
+      !commitHash.trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path and commit hash are required",
+      });
+    }
+
+    const result = await revertCommit(repoPath.trim(), commitHash);
+
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : "Revert failed",
+    });
+  }
+});
+
+// Continue Cherry-pick after conflict resolution
+app.post("/api/git-cherry-pick/continue", async (req, res) => {
+  try {
+    const { path: repoPath } = req.body;
+
+    if (typeof repoPath !== "string" || !repoPath.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path is required",
+      });
+    }
+
+    const result = await continueCherryPick(repoPath.trim());
+
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : "Could not continue Cherry-pick",
+    });
+  }
+});
+
+// Continue Revert after conflict resolution
+app.post("/api/git-revert/continue", async (req, res) => {
+  try {
+    const { path: repoPath } = req.body;
+
+    if (typeof repoPath !== "string" || !repoPath.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path is required",
+      });
+    }
+
+    const result = await continueRevert(repoPath.trim());
+
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : "Could not continue Revert",
+    });
+  }
+});
+
+// Abort Cherry-pick
+app.post("/api/git-cherry-pick/abort", async (req, res) => {
+  try {
+    const { path: repoPath } = req.body;
+
+    if (typeof repoPath !== "string" || !repoPath.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path is required",
+      });
+    }
+
+    const result = await abortCherryPick(repoPath.trim());
+
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : "Could not abort Cherry-pick",
+    });
+  }
+});
+
+// Abort Revert
+app.post("/api/git-revert/abort", async (req, res) => {
+  try {
+    const { path: repoPath } = req.body;
+
+    if (typeof repoPath !== "string" || !repoPath.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path is required",
+      });
+    }
+
+    const result = await abortRevert(repoPath.trim());
+
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : "Could not abort Revert",
+    });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(
+    `Codebase X-Ray API running at http://localhost:${PORT}`
+  );
 });

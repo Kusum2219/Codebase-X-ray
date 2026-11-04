@@ -790,3 +790,687 @@ export async function publishBranch(
   };
 }
 
+
+async function getMergeConflictFiles(git: ReturnType<typeof simpleGit>) {
+  const output = await git.raw([
+    "diff",
+    "--name-only",
+    "--diff-filter=U",
+  ]);
+
+  return output
+    .split(/\r?\n/)
+    .map((file) => file.trim())
+    .filter(Boolean);
+}
+
+async function validateMergeInProgress(git: ReturnType<typeof simpleGit>) {
+  try {
+    await git.raw(["rev-parse", "--verify", "MERGE_HEAD"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function mergeBranch(
+  repoPath: string,
+  branchName: string
+) {
+  const name = branchName.trim();
+
+  if (!name || name.startsWith("-")) {
+    throw new Error("Invalid branch name");
+  }
+
+  const git = simpleGit(repoPath);
+
+  if (!(await git.checkIsRepo())) {
+    throw new Error("Not a Git repository");
+  }
+
+  const status = await git.status();
+
+  if (!status.current) {
+    throw new Error("No current branch found");
+  }
+
+  if (status.current === name) {
+    throw new Error("Cannot merge the current branch into itself");
+  }
+
+  if (!status.isClean()) {
+    throw new Error(
+      "Working tree has uncommitted changes. Commit or stash them before merging."
+    );
+  }
+
+  const branches = await git.branchLocal();
+
+  if (!branches.all.includes(name)) {
+    throw new Error("Local branch not found");
+  }
+
+  try {
+    await git.raw(["merge", "--no-edit", "--", name]);
+
+    return {
+      success: true,
+      hasConflicts: false,
+      branch: name,
+      message: "Branch merged successfully",
+    };
+  } catch (error) {
+    const conflicts = await getMergeConflictFiles(git);
+
+    if (conflicts.length > 0) {
+      return {
+        success: false,
+        hasConflicts: true,
+        branch: name,
+        conflicts,
+        message: "Merge conflicts detected. Resolve them to continue.",
+      };
+    }
+
+    throw error;
+  }
+}
+
+export async function resolveMergeConflict(
+  repoPath: string,
+  filePath: string,
+  strategy: "ours" | "theirs" | "manual"
+) {
+  const git = simpleGit(repoPath);
+
+  if (!(await git.checkIsRepo())) {
+    throw new Error("Not a Git repository");
+  }
+
+  if (!(await validateMergeInProgress(git))) {
+    throw new Error("No merge is currently in progress");
+  }
+
+  if (!["ours", "theirs", "manual"].includes(strategy)) {
+    throw new Error("Invalid conflict resolution strategy");
+  }
+
+  const validatedPaths = await validateGitFilePaths(repoPath, [filePath]);
+  const relativePath = validatedPaths[0]?.replace(/\\/g, "/");
+
+if (!relativePath) {
+  throw new Error("Invalid file path");
+}
+
+  const conflicts = await getMergeConflictFiles(git);
+
+  if (!conflicts.includes(relativePath)) {
+    throw new Error("This file is not currently conflicted");
+  }
+
+  if (strategy === "ours" || strategy === "theirs") {
+    await git.raw([
+      "checkout",
+      `--${strategy}`,
+      "--",
+      relativePath,
+    ]);
+  }
+
+  // For manual resolution, edit and save the file in VS Code first.
+  await git.raw(["add", "--", relativePath]);
+
+  return {
+    filePath: relativePath,
+    strategy,
+    message: "File marked as resolved",
+    remainingConflicts: await getMergeConflictFiles(git),
+  };
+}
+
+export async function getMergeStatus(repoPath: string) {
+  const git = simpleGit(repoPath);
+
+  if (!(await git.checkIsRepo())) {
+    throw new Error("Not a Git repository");
+  }
+
+  const inProgress = await validateMergeInProgress(git);
+  const conflicts = inProgress
+    ? await getMergeConflictFiles(git)
+    : [];
+
+  return {
+    inProgress,
+    hasConflicts: conflicts.length > 0,
+    conflicts,
+  };
+}
+
+export async function completeMerge(repoPath: string) {
+  const git = simpleGit(repoPath);
+
+  if (!(await git.checkIsRepo())) {
+    throw new Error("Not a Git repository");
+  }
+
+  if (!(await validateMergeInProgress(git))) {
+    throw new Error("No merge is currently in progress");
+  }
+
+  const conflicts = await getMergeConflictFiles(git);
+
+  if (conflicts.length > 0) {
+    throw new Error(
+      `Resolve all conflicts before completing the merge: ${conflicts.join(", ")}`
+    );
+  }
+
+  const status = await git.status();
+
+  if (status.staged.length === 0) {
+    throw new Error("No resolved merge changes are staged");
+  }
+
+  const result = await git.commit("Merge branch");
+
+  return {
+    success: true,
+    commitHash: result.commit,
+    message: "Merge completed successfully",
+  };
+}
+
+export async function abortMerge(repoPath: string) {
+  const git = simpleGit(repoPath);
+
+  if (!(await git.checkIsRepo())) {
+    throw new Error("Not a Git repository");
+  }
+
+  if (!(await validateMergeInProgress(git))) {
+    throw new Error("No merge is currently in progress");
+  }
+
+  await git.raw(["merge", "--abort"]);
+
+  return {
+    success: true,
+    message: "Merge aborted successfully",
+  };
+}
+// ==================== GIT TAG MANAGEMENT ====================
+
+export async function getGitTags(repoPath: string) {
+  const git = simpleGit(repoPath);
+
+  if (!(await git.checkIsRepo())) {
+    throw new Error("Not a Git repository");
+  }
+
+  const output = await git.raw([
+    "for-each-ref",
+    "--format=%(refname:short)%1f%(objectname)%1f%(objecttype)%1f%(taggername)%1f%(creatordate:iso8601)%1f%(contents:subject)%1f%(*objectname)",
+    "refs/tags",
+  ]);
+
+  const tags = output
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const [
+        name,
+        objectHash,
+        objectType,
+        tagger,
+        date,
+        message,
+        peeledHash,
+      ] = line.split("\x1f");
+
+      return {
+        name,
+        type: objectType === "tag" ? "annotated" : "lightweight",
+        objectHash,
+        commitHash: peeledHash || objectHash,
+        tagger: tagger || "",
+        date: date || "",
+        message: message || "",
+      };
+    });
+
+  return { tags };
+}
+
+async function validateTagName(
+  git: ReturnType<typeof simpleGit>,
+  tagName: string
+) {
+  const name = tagName.trim();
+
+  if (!name || name.length > 100 || name.startsWith("-")) {
+    throw new Error("Invalid tag name");
+  }
+
+  await git.raw(["check-ref-format", `refs/tags/${name}`]);
+
+  return name;
+}
+
+export async function createGitTag(
+  repoPath: string,
+  tagName: string,
+  type: "lightweight" | "annotated",
+  message = "",
+  target = "HEAD"
+) {
+  const git = simpleGit(repoPath);
+
+  if (!(await git.checkIsRepo())) {
+    throw new Error("Not a Git repository");
+  }
+
+  const name = await validateTagName(git, tagName);
+
+  const existingTags = await git.tags();
+
+  if (existingTags.all.includes(name)) {
+    throw new Error(`Tag "${name}" already exists`);
+  }
+
+  const targetCommit = target.trim() || "HEAD";
+
+  if (targetCommit.startsWith("-")) {
+    throw new Error("Invalid target commit");
+  }
+
+  const resolvedCommit = (
+    await git.raw([
+      "rev-parse",
+      "--verify",
+      "--end-of-options",
+      `${targetCommit}^{commit}`,
+    ])
+  ).trim();
+
+  if (!/^[a-f0-9]{40,64}$/i.test(resolvedCommit)) {
+    throw new Error("Invalid target commit");
+  }
+
+  if (type === "annotated") {
+    const trimmedMessage = message.trim();
+
+    if (!trimmedMessage) {
+      throw new Error("Message is required for annotated tags");
+    }
+
+    if (trimmedMessage.length > 200) {
+      throw new Error("Tag message cannot exceed 200 characters");
+    }
+
+    await git.raw([
+      "tag",
+      "-a",
+      name,
+      resolvedCommit,
+      "-m",
+      trimmedMessage,
+    ]);
+  } else if (type === "lightweight") {
+    await git.raw(["tag", name, resolvedCommit]);
+  } else {
+    throw new Error("Invalid tag type");
+  }
+
+  return {
+    name,
+    type,
+    commitHash: resolvedCommit,
+    message:
+      type === "annotated"
+        ? "Annotated tag created successfully"
+        : "Lightweight tag created successfully",
+  };
+}
+
+export async function deleteGitTag(
+  repoPath: string,
+  tagName: string
+) {
+  const git = simpleGit(repoPath);
+
+  if (!(await git.checkIsRepo())) {
+    throw new Error("Not a Git repository");
+  }
+
+  const name = await validateTagName(git, tagName);
+  const existingTags = await git.tags();
+
+  if (!existingTags.all.includes(name)) {
+    throw new Error("Tag not found");
+  }
+
+  await git.raw(["tag", "-d", name]);
+
+  return {
+    name,
+    message: "Local tag deleted successfully",
+  };
+}
+
+export async function pushGitTag(
+  repoPath: string,
+  tagName: string,
+  remoteName = "origin"
+) {
+  const git = simpleGit(repoPath);
+
+  if (!(await git.checkIsRepo())) {
+    throw new Error("Not a Git repository");
+  }
+
+  const name = await validateTagName(git, tagName);
+  const remote = remoteName.trim();
+
+  if (!remote || remote.startsWith("-")) {
+    throw new Error("Invalid remote name");
+  }
+
+  const remotes = await git.getRemotes();
+
+  if (!remotes.some((item) => item.name === remote)) {
+    throw new Error("Remote not found");
+  }
+
+  const existingTags = await git.tags();
+
+  if (!existingTags.all.includes(name)) {
+    throw new Error("Tag not found");
+  }
+
+  await git.push(remote, `refs/tags/${name}`);
+
+  return {
+    name,
+    remote,
+    message: `Tag "${name}" pushed successfully`,
+  };
+}
+
+export async function pushAllGitTags(
+  repoPath: string,
+  remoteName = "origin"
+) {
+  const git = simpleGit(repoPath);
+
+  if (!(await git.checkIsRepo())) {
+    throw new Error("Not a Git repository");
+  }
+
+  const remote = remoteName.trim();
+
+  if (!remote || remote.startsWith("-")) {
+    throw new Error("Invalid remote name");
+  }
+
+  const remotes = await git.getRemotes();
+
+  if (!remotes.some((item) => item.name === remote)) {
+    throw new Error("Remote not found");
+  }
+
+  await git.push(remote, "--tags");
+
+  return {
+    remote,
+    message: "All tags pushed successfully",
+  };
+}
+// ==========================================
+// CHERRY-PICK & REVERT
+// ==========================================
+
+export type GitOperationStatus = {
+  inProgress: boolean;
+  operation: "cherry-pick" | "revert" | null;
+  hasConflicts: boolean;
+  conflicts: string[];
+};
+
+// Validate commit hash and resolve it to a real commit
+async function validateCommitHash(repoPath: string, commitHash: string) {
+  const hash = commitHash.trim();
+
+  if (!/^[a-f0-9]{7,64}$/i.test(hash)) {
+    throw new Error("Invalid commit hash");
+  }
+
+  const git = simpleGit(repoPath);
+
+  const resolved = (
+    await git.raw([
+      "rev-parse",
+      "--verify",
+      "--end-of-options",
+      `${hash}^{commit}`,
+    ])
+  ).trim();
+
+  if (!resolved) {
+    throw new Error("Commit not found");
+  }
+
+  return resolved;
+}
+
+// Check whether a Git operation is active
+async function hasGitOperation(
+  repoPath: string,
+  operation: "CHERRY_PICK_HEAD" | "REVERT_HEAD"
+) {
+  const git = simpleGit(repoPath);
+
+  try {
+    await git.raw(["rev-parse", "--verify", operation]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Get current Cherry-pick / Revert status
+export async function getGitOperationStatus(
+  repoPath: string
+): Promise<GitOperationStatus> {
+  const git = simpleGit(repoPath);
+
+  const cherryPickInProgress = await hasGitOperation(
+    repoPath,
+    "CHERRY_PICK_HEAD"
+  );
+
+  const revertInProgress = await hasGitOperation(
+    repoPath,
+    "REVERT_HEAD"
+  );
+
+  const status = await git.status();
+
+  let operation: "cherry-pick" | "revert" | null = null;
+
+  if (cherryPickInProgress) {
+    operation = "cherry-pick";
+  } else if (revertInProgress) {
+    operation = "revert";
+  }
+
+  return {
+    inProgress: operation !== null,
+    operation,
+    hasConflicts: status.conflicted.length > 0,
+    conflicts: status.conflicted,
+  };
+}
+
+// Cherry-pick a selected commit
+export async function cherryPickCommit(
+  repoPath: string,
+  commitHash: string
+) {
+  const git = simpleGit(repoPath);
+
+  const currentStatus = await getGitOperationStatus(repoPath);
+
+  if (currentStatus.inProgress) {
+    throw new Error(
+      `A ${currentStatus.operation} operation is already in progress. Complete or abort it first.`
+    );
+  }
+
+  const resolvedHash = await validateCommitHash(repoPath, commitHash);
+
+  try {
+    await git.raw(["cherry-pick", resolvedHash]);
+
+    return {
+      success: true,
+      message: "Commit cherry-picked successfully",
+      commitHash: resolvedHash,
+      ...(await getGitOperationStatus(repoPath)),
+    };
+  } catch (error) {
+    const status = await getGitOperationStatus(repoPath);
+
+    if (status.operation === "cherry-pick") {
+      return {
+        success: false,
+        message: status.hasConflicts
+          ? "Cherry-pick has conflicts. Resolve them before continuing."
+          : "Cherry-pick is in progress.",
+        commitHash: resolvedHash,
+        ...status,
+      };
+    }
+
+    throw error;
+  }
+}
+
+// Revert a selected commit
+export async function revertCommit(
+  repoPath: string,
+  commitHash: string
+) {
+  const git = simpleGit(repoPath);
+
+  const currentStatus = await getGitOperationStatus(repoPath);
+
+  if (currentStatus.inProgress) {
+    throw new Error(
+      `A ${currentStatus.operation} operation is already in progress. Complete or abort it first.`
+    );
+  }
+
+  const resolvedHash = await validateCommitHash(repoPath, commitHash);
+
+  try {
+    await git.raw(["revert", "--no-edit", resolvedHash]);
+
+    return {
+      success: true,
+      message: "Commit reverted successfully",
+      commitHash: resolvedHash,
+      ...(await getGitOperationStatus(repoPath)),
+    };
+  } catch (error) {
+    const status = await getGitOperationStatus(repoPath);
+
+    if (status.operation === "revert") {
+      return {
+        success: false,
+        message: status.hasConflicts
+          ? "Revert has conflicts. Resolve them before continuing."
+          : "Revert is in progress.",
+        commitHash: resolvedHash,
+        ...status,
+      };
+    }
+
+    throw error;
+  }
+}
+
+// Abort Cherry-pick
+export async function abortCherryPick(repoPath: string) {
+  const git = simpleGit(repoPath);
+  const status = await getGitOperationStatus(repoPath);
+
+  if (status.operation !== "cherry-pick") {
+    throw new Error("No Cherry-pick operation is in progress");
+  }
+
+  await git.raw(["cherry-pick", "--abort"]);
+
+  return {
+    success: true,
+    message: "Cherry-pick aborted successfully",
+  };
+}
+
+// Abort Revert
+export async function abortRevert(repoPath: string) {
+  const git = simpleGit(repoPath);
+  const status = await getGitOperationStatus(repoPath);
+
+  if (status.operation !== "revert") {
+    throw new Error("No Revert operation is in progress");
+  }
+
+  await git.raw(["revert", "--abort"]);
+
+  return {
+    success: true,
+    message: "Revert aborted successfully",
+  };
+}
+export async function continueCherryPick(repoPath: string) {
+  const git = simpleGit(repoPath);
+  const status = await getGitOperationStatus(repoPath);
+
+  if (status.operation !== "cherry-pick") {
+    throw new Error("No Cherry-pick operation is in progress");
+  }
+
+  if (status.hasConflicts) {
+    throw new Error("Resolve all conflicts before continuing");
+  }
+
+  await git.raw(["-c", "core.editor=true", "cherry-pick", "--continue"]);
+
+  return {
+    success: true,
+    message: "Cherry-pick completed successfully",
+  };
+}
+
+export async function continueRevert(repoPath: string) {
+  const git = simpleGit(repoPath);
+  const status = await getGitOperationStatus(repoPath);
+
+  if (status.operation !== "revert") {
+    throw new Error("No Revert operation is in progress");
+  }
+
+  if (status.hasConflicts) {
+    throw new Error("Resolve all conflicts before continuing");
+  }
+
+  await git.raw(["-c", "core.editor=true", "revert", "--continue"]);
+
+  return {
+    success: true,
+    message: "Revert completed successfully",
+  };
+}

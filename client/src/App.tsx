@@ -169,6 +169,20 @@ const [newBranchName, setNewBranchName] = useState("");
 const [branchLoading, setBranchLoading] = useState(false);
 const [branchMessage, setBranchMessage] = useState("");
 const [branchError, setBranchError] = useState("");
+const [mergeBranchName, setMergeBranchName] = useState("");
+const [mergeLoading, setMergeLoading] = useState(false);
+const [mergeMessage, setMergeMessage] = useState("");
+const [mergeError, setMergeError] = useState("");
+const [mergeStatus, setMergeStatus] = useState<{
+  inProgress: boolean;
+  hasConflicts: boolean;
+  conflicts: string[];
+}>({
+  inProgress: false,
+  hasConflicts: false,
+  conflicts: [],
+});
+
 const [selectedCommit, setSelectedCommit] = useState("");
 const [commitDiff, setCommitDiff] = useState("");
 const [commitDiffLoading, setCommitDiffLoading] = useState(false);
@@ -192,6 +206,48 @@ const [stashLoading, setStashLoading] = useState(false);
 const [stashActionLoading, setStashActionLoading] = useState(false);
 const [stashSuccess, setStashSuccess] = useState("");
 const [stashError, setStashError] = useState("");
+
+// Git Tags
+const [gitTags, setGitTags] = useState<
+  {
+    name: string;
+    type: "annotated" | "lightweight";
+    objectHash: string;
+    commitHash: string;
+    tagger: string;
+    date: string;
+    message: string;
+  }[]
+>([]);
+
+const [tagName, setTagName] = useState("");
+const [tagType, setTagType] = useState<"lightweight" | "annotated">("annotated");
+const [tagMessage, setTagMessage] = useState("");
+const [tagTarget, setTagTarget] = useState("");
+const [tagRemote, setTagRemote] = useState("origin");
+
+const [tagLoading, setTagLoading] = useState(false);
+const [tagActionLoading, setTagActionLoading] = useState(false);
+const [tagSuccess, setTagSuccess] = useState("");
+const [tagError, setTagError] = useState("");
+
+// Cherry-pick & Revert
+const [operationCommitHash, setOperationCommitHash] = useState("");
+const [operationLoading, setOperationLoading] = useState(false);
+const [operationMessage, setOperationMessage] = useState("");
+const [operationError, setOperationError] = useState("");
+
+const [gitOperationStatus, setGitOperationStatus] = useState<{
+  inProgress: boolean;
+  operation: "cherry-pick" | "revert" | null;
+  hasConflicts: boolean;
+  conflicts: string[];
+}>({
+  inProgress: false,
+  operation: null,
+  hasConflicts: false,
+  conflicts: [],
+});
 
 const [gitActionLoading, setGitActionLoading] = useState(false);
 const [gitActionMessage, setGitActionMessage] = useState("");
@@ -448,6 +504,196 @@ async function loadBranches() {
     setBranchLoading(false);
   }
 }
+
+
+const loadMergeStatus = async () => {
+  if (!scanPath.trim()) return;
+
+  try {
+    setMergeLoading(true);
+    setMergeError("");
+
+    const response = await fetch(
+      `http://localhost:5000/api/git-merge-status?path=${encodeURIComponent(scanPath)}`
+    );
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || "Unable to load merge status");
+    }
+
+    setMergeStatus(result.data);
+  } catch (error) {
+    setMergeError(
+      error instanceof Error ? error.message : "Failed to load merge status"
+    );
+  } finally {
+    setMergeLoading(false);
+  }
+};
+
+const handleMergeBranch = async () => {
+  if (!mergeBranchName || !scanPath.trim()) return;
+
+  const confirmed = window.confirm(
+    `Merge "${mergeBranchName}" into "${currentBranch}"?`
+  );
+
+  if (!confirmed) return;
+
+  try {
+    setMergeLoading(true);
+    setMergeError("");
+    setMergeMessage("");
+
+    const response = await fetch("http://localhost:5000/api/git-merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path: scanPath,
+        branchName: mergeBranchName,
+        confirmed: true,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || "Merge failed");
+    }
+
+    setMergeMessage(result.data.message);
+    setMergeBranchName("");
+    await loadMergeStatus();
+    await loadBranches();
+  } catch (error) {
+    setMergeError(
+      error instanceof Error ? error.message : "Merge failed"
+    );
+    await loadMergeStatus();
+  } finally {
+    setMergeLoading(false);
+  }
+};
+
+const handleResolveConflict = async (
+  filePath: string,
+  strategy: "ours" | "theirs" | "manual"
+) => {
+  if (strategy === "manual") {
+    window.alert(
+      `Open "${filePath}" in VS Code, resolve the conflict markers, save the file, then click "Mark Resolved".`
+    );
+  }
+
+  try {
+    setMergeLoading(true);
+    setMergeError("");
+    setMergeMessage("");
+
+    const response = await fetch(
+      "http://localhost:5000/api/git-merge/resolve",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: scanPath,
+          filePath,
+          strategy,
+        }),
+      }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || "Conflict resolution failed");
+    }
+
+    setMergeMessage(result.data.message);
+    await loadMergeStatus();
+  } catch (error) {
+    setMergeError(
+      error instanceof Error ? error.message : "Conflict resolution failed"
+    );
+  } finally {
+    setMergeLoading(false);
+  }
+};
+
+const handleCompleteMerge = async () => {
+  if (!window.confirm("Are you sure you want to complete this merge?")) {
+    return;
+  }
+
+  try {
+    setMergeLoading(true);
+    setMergeError("");
+
+    const response = await fetch(
+      "http://localhost:5000/api/git-merge/complete",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: scanPath, confirmed: true }),
+      }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || "Unable to complete merge");
+    }
+
+    setMergeMessage(result.data.message);
+    await loadMergeStatus();
+    await loadBranches();
+  } catch (error) {
+    setMergeError(
+      error instanceof Error ? error.message : "Unable to complete merge"
+    );
+  } finally {
+    setMergeLoading(false);
+  }
+};
+
+const handleAbortMerge = async () => {
+  if (!window.confirm("Abort this merge? All merge-in-progress changes will be discarded.")) {
+    return;
+  }
+
+  try {
+    setMergeLoading(true);
+    setMergeError("");
+
+    const response = await fetch(
+      "http://localhost:5000/api/git-merge/abort",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: scanPath, confirmed: true }),
+      }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || "Unable to abort merge");
+    }
+
+    setMergeMessage(result.data.message);
+    await loadMergeStatus();
+    await loadBranches();
+  } catch (error) {
+    setMergeError(
+      error instanceof Error ? error.message : "Unable to abort merge"
+    );
+  } finally {
+    setMergeLoading(false);
+  }
+};
+
 
 async function loadCommitDiff(commitHash: string) {
   try {
@@ -822,6 +1068,306 @@ async function handleFetchLatest() {
   }
 }
 
+// Load Git tags
+async function loadGitTags() {
+  if (!scanPath.trim()) return;
+
+  try {
+    setTagLoading(true);
+    setTagError("");
+
+    const response = await api.get("/git-tags", {
+      params: { path: scanPath.trim() },
+    });
+
+    setGitTags(response.data.data.tags || []);
+  } catch (error: any) {
+    setTagError(
+      error.response?.data?.message || "Failed to load Git tags."
+    );
+  } finally {
+    setTagLoading(false);
+  }
+}
+
+// Create a tag
+async function handleCreateGitTag() {
+  if (!tagName.trim()) {
+    setTagError("Please enter a tag name.");
+    return;
+  }
+
+  if (tagType === "annotated" && !tagMessage.trim()) {
+    setTagError("Please enter a message for the annotated tag.");
+    return;
+  }
+
+  try {
+    setTagActionLoading(true);
+    setTagError("");
+    setTagSuccess("");
+
+    const response = await api.post("/git-tags/create", {
+      path: scanPath.trim(),
+      tagName: tagName.trim(),
+      type: tagType,
+      message: tagMessage.trim(),
+      target: tagTarget.trim() || "HEAD",
+    });
+
+    setTagSuccess(response.data.data.message);
+    setTagName("");
+    setTagMessage("");
+    setTagTarget("");
+
+    await loadGitTags();
+  } catch (error: any) {
+    setTagError(
+      error.response?.data?.message || "Failed to create tag."
+    );
+  } finally {
+    setTagActionLoading(false);
+  }
+}
+
+// Delete a tag
+async function handleDeleteGitTag(name: string) {
+  if (!window.confirm(`Permanently delete local tag "${name}"?`)) {
+    return;
+  }
+
+  try {
+    setTagActionLoading(true);
+    setTagError("");
+    setTagSuccess("");
+
+    const response = await api.post("/git-tags/delete", {
+      path: scanPath.trim(),
+      tagName: name,
+      confirmed: true,
+    });
+
+    setTagSuccess(response.data.data.message);
+
+    await loadGitTags();
+  } catch (error: any) {
+    setTagError(
+      error.response?.data?.message || "Failed to delete tag."
+    );
+  } finally {
+    setTagActionLoading(false);
+  }
+}
+
+// Push an individual tag
+async function handlePushGitTag(name: string) {
+  if (!tagRemote.trim()) {
+    setTagError("Enter a remote name.");
+    return;
+  }
+
+  if (!window.confirm(`Push tag "${name}" to ${tagRemote}?`)) {
+    return;
+  }
+
+  try {
+    setTagActionLoading(true);
+    setTagError("");
+    setTagSuccess("");
+
+    const response = await api.post("/git-tags/push", {
+      path: scanPath.trim(),
+      tagName: name,
+      remote: tagRemote.trim(),
+      confirmed: true,
+    });
+
+    setTagSuccess(response.data.data.message);
+  } catch (error: any) {
+    setTagError(
+      error.response?.data?.message || "Failed to push tag."
+    );
+  } finally {
+    setTagActionLoading(false);
+  }
+}
+
+// Push all tags
+async function handlePushAllGitTags() {
+  if (!tagRemote.trim()) {
+    setTagError("Enter a remote name.");
+    return;
+  }
+
+  if (gitTags.length === 0) {
+    setTagError("There are no tags to push.");
+    return;
+  }
+
+  if (!window.confirm(`Push all ${gitTags.length} tags to ${tagRemote}?`)) {
+    return;
+  }
+
+  try {
+    setTagActionLoading(true);
+    setTagError("");
+    setTagSuccess("");
+
+    const response = await api.post("/git-tags/push-all", {
+      path: scanPath.trim(),
+      remote: tagRemote.trim(),
+      confirmed: true,
+    });
+
+    setTagSuccess(response.data.data.message);
+  } catch (error: any) {
+    setTagError(
+      error.response?.data?.message || "Failed to push all tags."
+    );
+  } finally {
+    setTagActionLoading(false);
+  }
+}
+
+const loadGitOperationStatus = async () => {
+  if (!scanPath.trim()) return;
+
+  try {
+    const response = await api.get("/git-operation-status", {
+      params: { path: scanPath.trim() },
+    });
+
+    setGitOperationStatus(response.data.data);
+  } catch (error) {
+    console.error("Failed to load Git operation status:", error);
+  }
+};
+
+const handleGitOperation = async (
+  action: "cherry-pick" | "revert"
+) => {
+  if (!scanPath.trim() || !operationCommitHash.trim()) {
+    setOperationError("Enter a commit hash first.");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    action === "cherry-pick"
+      ? `Cherry-pick commit ${operationCommitHash}?`
+      : `Revert commit ${operationCommitHash}?`
+  );
+
+  if (!confirmed) return;
+
+  setOperationLoading(true);
+  setOperationError("");
+  setOperationMessage("");
+
+  try {
+    const endpoint =
+      action === "cherry-pick" ? "/git-cherry-pick" : "/git-revert";
+
+    const response = await api.post(endpoint, {
+      path: scanPath.trim(),
+      commitHash: operationCommitHash.trim(),
+    });
+
+    const result = response.data.data;
+
+    setOperationMessage(result.message);
+    setGitOperationStatus({
+      inProgress: result.inProgress,
+      operation: result.operation,
+      hasConflicts: result.hasConflicts,
+      conflicts: result.conflicts,
+    });
+
+    if (!result.inProgress) {
+      setOperationCommitHash("");
+      await loadGitInfo(scanPath.trim());
+      await loadCommitHistory(1);
+    }
+  } catch (error: any) {
+    setOperationError(
+      error.response?.data?.message || "Git operation failed."
+    );
+    await loadGitOperationStatus();
+  } finally {
+    setOperationLoading(false);
+  }
+};
+
+const handleContinueGitOperation = async () => {
+  const operation = gitOperationStatus.operation;
+  if (!operation) return;
+
+  setOperationLoading(true);
+  setOperationError("");
+  setOperationMessage("");
+
+  try {
+    const endpoint =
+      operation === "cherry-pick"
+        ? "/git-cherry-pick/continue"
+        : "/git-revert/continue";
+
+    const response = await api.post(endpoint, {
+      path: scanPath.trim(),
+    });
+
+    setOperationMessage(response.data.data.message);
+
+    await loadGitOperationStatus();
+    await loadGitInfo(scanPath.trim());
+    await loadCommitHistory(1);
+  } catch (error: any) {
+    setOperationError(
+      error.response?.data?.message || "Could not continue operation."
+    );
+    await loadGitOperationStatus();
+  } finally {
+    setOperationLoading(false);
+  }
+};
+
+const handleAbortGitOperation = async () => {
+  const operation = gitOperationStatus.operation;
+  if (!operation) return;
+
+  const confirmed = window.confirm(
+    `Are you sure you want to abort this ${operation} operation?`
+  );
+
+  if (!confirmed) return;
+
+  setOperationLoading(true);
+  setOperationError("");
+  setOperationMessage("");
+
+  try {
+    const endpoint =
+      operation === "cherry-pick"
+        ? "/git-cherry-pick/abort"
+        : "/git-revert/abort";
+
+    const response = await api.post(endpoint, {
+      path: scanPath.trim(),
+    });
+
+    setOperationMessage(response.data.data.message);
+
+    await loadGitOperationStatus();
+    await loadGitInfo(scanPath.trim());
+    await loadCommitHistory(1);
+  } catch (error: any) {
+    setOperationError(
+      error.response?.data?.message || "Could not abort operation."
+    );
+  } finally {
+    setOperationLoading(false);
+  }
+};
+
   async function handleScan() {
     if (!scanPath.trim()) {
       setScanError("Please enter a project folder path.");
@@ -848,6 +1394,8 @@ if (result.success) {
   await loadGitInfo(scanPath.trim());
   await loadBranches();
   await loadCommitHistory(1);
+  await loadGitTags();
+  await loadGitOperationStatus();
 }
 if (result.success) {
   const normalizedPath = result.root.replace(/[\\/]+$/, "").toLowerCase();
@@ -1967,6 +2515,379 @@ const diffSummary = useMemo(() => {
   </div>
 </div>
 
+{/* Git Tags Management */}
+<div className="mt-6 rounded-xl border border-white/[0.08] bg-[#111419] p-5 space-y-5">
+
+  <div className="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <div className="flex items-center gap-2">
+        <GitBranch size={18} className="text-purple-400" />
+        <h3 className="text-lg font-semibold text-white">
+          Git Tags Management
+        </h3>
+      </div>
+
+      <p className="mt-1 text-sm text-gray-400">
+        Create release versions, manage tags and publish them to remote.
+      </p>
+    </div>
+
+    <button
+      type="button"
+      onClick={loadGitTags}
+      disabled={tagLoading || !scanPath.trim()}
+      className="rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-300 hover:bg-white/5 disabled:opacity-50"
+    >
+      {tagLoading ? "Refreshing..." : "Refresh Tags"}
+    </button>
+  </div>
+
+  {/* Create Tag */}
+  <div className="rounded-lg border border-white/[0.07] bg-white/[0.02] p-4 space-y-4">
+
+    <h4 className="text-sm font-semibold text-white">
+      Create New Tag
+    </h4>
+
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+
+      <input
+        type="text"
+        value={tagName}
+        onChange={(e) => setTagName(e.target.value)}
+        placeholder="Tag name (e.g. v1.0.0)"
+        className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-3 text-sm text-white outline-none focus:border-purple-500"
+      />
+
+      <select
+        value={tagType}
+        onChange={(e) =>
+          setTagType(e.target.value as "lightweight" | "annotated")
+        }
+        className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-3 text-sm text-white outline-none focus:border-purple-500"
+      >
+        <option value="annotated">Annotated Tag</option>
+        <option value="lightweight">Lightweight Tag</option>
+      </select>
+
+    </div>
+
+    {tagType === "annotated" && (
+      <textarea
+        value={tagMessage}
+        onChange={(e) => setTagMessage(e.target.value)}
+        placeholder="Enter tag message (e.g. Stable release version 1.0.0)"
+        rows={3}
+        className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-3 text-sm text-white outline-none focus:border-purple-500"
+      />
+    )}
+
+    <input
+      type="text"
+      value={tagTarget}
+      onChange={(e) => setTagTarget(e.target.value)}
+      placeholder="Target commit hash (optional, default: HEAD)"
+      className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-3 text-sm text-white outline-none focus:border-purple-500"
+    />
+
+    <button
+      type="button"
+      onClick={handleCreateGitTag}
+      disabled={tagActionLoading || !tagName.trim() || !scanPath.trim()}
+      className="rounded-lg bg-purple-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+    >
+      {tagActionLoading ? "Processing..." : "Create Tag"}
+    </button>
+
+  </div>
+
+  {/* Remote Push */}
+  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+
+    <input
+      type="text"
+      value={tagRemote}
+      onChange={(e) => setTagRemote(e.target.value)}
+      placeholder="Remote name (origin)"
+      className="min-w-0 flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2.5 text-sm text-white outline-none focus:border-blue-500"
+    />
+
+    <button
+      type="button"
+      onClick={handlePushAllGitTags}
+      disabled={tagActionLoading || gitTags.length === 0 || !scanPath.trim()}
+      className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+    >
+      Push All Tags
+    </button>
+
+  </div>
+
+  {tagSuccess && (
+    <p className="rounded-lg border border-green-800 bg-green-950/40 p-3 text-sm text-green-400">
+      {tagSuccess}
+    </p>
+  )}
+
+  {tagError && (
+    <p className="rounded-lg border border-red-800 bg-red-950/40 p-3 text-sm text-red-400">
+      {tagError}
+    </p>
+  )}
+
+  {/* Tag List */}
+  <div className="space-y-3">
+
+    <div className="flex items-center justify-between">
+      <h4 className="text-sm font-semibold text-white">
+        Available Tags
+      </h4>
+
+      <span className="rounded-full bg-purple-500/10 px-3 py-1 text-xs text-purple-300">
+        {gitTags.length} total
+      </span>
+    </div>
+
+    {tagLoading && gitTags.length === 0 ? (
+      <p className="py-6 text-center text-sm text-gray-400">
+        Loading tags...
+      </p>
+    ) : gitTags.length === 0 ? (
+      <div className="rounded-lg border border-dashed border-gray-700 py-8 text-center">
+        <p className="text-sm text-gray-300">
+          No Git tags found
+        </p>
+        <p className="mt-1 text-xs text-gray-500">
+          Create your first tag to mark a release or milestone.
+        </p>
+      </div>
+    ) : (
+      <div className="space-y-3">
+
+        {gitTags.map((tag) => (
+          <div
+            key={tag.name}
+            className="rounded-lg border border-white/[0.07] bg-white/[0.02] p-4"
+          >
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+
+              <div className="min-w-0">
+
+                <div className="flex flex-wrap items-center gap-2">
+
+                  <span className="font-semibold text-purple-300">
+                    {tag.name}
+                  </span>
+
+                  <span
+                    className={`rounded-md px-2 py-1 text-[10px] ${
+                      tag.type === "annotated"
+                        ? "bg-blue-500/10 text-blue-300"
+                        : "bg-gray-500/10 text-gray-300"
+                    }`}
+                  >
+                    {tag.type}
+                  </span>
+
+                </div>
+
+                {tag.message && (
+                  <p className="mt-2 break-words text-sm text-gray-300">
+                    {tag.message}
+                  </p>
+                )}
+
+                <p className="mt-2 break-all font-mono text-xs text-gray-500">
+                  Commit: {tag.commitHash}
+                </p>
+
+                {tag.tagger && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    Tagger: {tag.tagger}
+                  </p>
+                )}
+
+                {tag.date && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    Created: {tag.date}
+                  </p>
+                )}
+
+              </div>
+
+              <div className="flex shrink-0 flex-wrap gap-2">
+
+                <button
+                  type="button"
+                  onClick={() => handlePushGitTag(tag.name)}
+                  disabled={tagActionLoading}
+                  className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  Push
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleDeleteGitTag(tag.name)}
+                  disabled={tagActionLoading}
+                  className="rounded-md bg-red-600/10 px-3 py-2 text-xs text-red-400 hover:bg-red-600/20 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+
+              </div>
+
+            </div>
+
+          </div>
+        ))}
+
+      </div>
+    )}
+
+  </div>
+</div>
+
+{/* Cherry-pick & Revert */}
+<section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-5">
+  <div className="flex items-center gap-3">
+    <div className="p-2 bg-indigo-100 rounded-lg">
+      <GitBranch className="w-5 h-5 text-indigo-600" />
+    </div>
+
+    <div>
+      <h2 className="text-lg font-semibold text-gray-900">
+        Cherry-pick & Revert
+      </h2>
+      <p className="text-sm text-gray-500">
+        Apply a specific commit or safely undo its changes.
+      </p>
+    </div>
+  </div>
+
+  <div className="space-y-2">
+    <label className="block text-sm font-medium text-gray-700">
+      Commit Hash
+    </label>
+
+    <input
+      type="text"
+      value={operationCommitHash}
+      onChange={(e) => setOperationCommitHash(e.target.value)}
+      placeholder="Enter commit hash (e.g. a1b2c3d)"
+      disabled={operationLoading || gitOperationStatus.inProgress}
+      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+    />
+
+    <p className="text-xs text-gray-500">
+      Copy the commit hash from your Git Commit History section.
+    </p>
+  </div>
+
+  <div className="flex flex-wrap gap-3">
+    <button
+      onClick={() => handleGitOperation("cherry-pick")}
+      disabled={
+        operationLoading ||
+        gitOperationStatus.inProgress ||
+        !operationCommitHash.trim()
+      }
+      className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+    >
+      {operationLoading ? "Processing..." : "Cherry-pick Commit"}
+    </button>
+
+    <button
+      onClick={() => handleGitOperation("revert")}
+      disabled={
+        operationLoading ||
+        gitOperationStatus.inProgress ||
+        !operationCommitHash.trim()
+      }
+      className="px-4 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-700 disabled:opacity-50"
+    >
+      {operationLoading ? "Processing..." : "Revert Commit"}
+    </button>
+  </div>
+
+  {operationMessage && (
+    <div className="p-3 rounded-lg bg-green-50 text-green-700 text-sm">
+      {operationMessage}
+    </div>
+  )}
+
+  {operationError && (
+    <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm">
+      {operationError}
+    </div>
+  )}
+
+  {gitOperationStatus.inProgress && (
+    <div className="border border-yellow-300 bg-yellow-50 rounded-lg p-4 space-y-3">
+      <div>
+        <h3 className="font-semibold text-yellow-900">
+          {gitOperationStatus.operation === "cherry-pick"
+            ? "Cherry-pick in progress"
+            : "Revert in progress"}
+        </h3>
+
+        <p className="text-sm text-yellow-800 mt-1">
+          {gitOperationStatus.hasConflicts
+            ? "Conflicts detected. Resolve them in your editor, save the files, and then continue."
+            : "Operation is in progress. You can continue or abort it."}
+        </p>
+      </div>
+
+      {gitOperationStatus.conflicts.length > 0 && (
+        <div>
+          <p className="text-sm font-medium text-yellow-900 mb-2">
+            Conflicting files:
+          </p>
+
+          <ul className="list-disc pl-5 text-sm text-yellow-800 space-y-1">
+            {gitOperationStatus.conflicts.map((file) => (
+              <li key={file} className="break-all">
+                {file}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={handleContinueGitOperation}
+          disabled={operationLoading || gitOperationStatus.hasConflicts}
+          className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+        >
+          Continue Operation
+        </button>
+
+        <button
+          onClick={loadGitOperationStatus}
+          disabled={operationLoading}
+          className="px-4 py-2 bg-white border border-yellow-400 text-yellow-900 rounded-lg text-sm hover:bg-yellow-100 disabled:opacity-50"
+        >
+          Refresh Status
+        </button>
+
+        <button
+          onClick={handleAbortGitOperation}
+          disabled={operationLoading}
+          className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 disabled:opacity-50"
+        >
+          Abort Operation
+        </button>
+      </div>
+    </div>
+  )}
+
+  <p className="text-xs text-gray-500">
+    Cherry-pick and Revert create new commits. Existing commit history is preserved.
+  </p>
+</section>
+
         <div className="rounded-lg border border-white/[0.07] p-4">
           <p className="text-xs text-gray-500">Changed files</p>
           <p className="mt-2 text-2xl font-semibold text-white">
@@ -2279,6 +3200,186 @@ const diffSummary = useMemo(() => {
     )}
   </div>
 </section>
+
+
+<section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+  <div className="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 className="text-xl font-semibold text-white">
+        Merge & Conflict Resolution
+      </h2>
+      <p className="mt-1 text-sm text-slate-400">
+        Merge branches and resolve conflicting files.
+      </p>
+    </div>
+
+    <button
+      type="button"
+      onClick={loadMergeStatus}
+      disabled={mergeLoading || !scanPath.trim()}
+      className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+    >
+      Refresh Status
+    </button>
+  </div>
+
+  <div className="mt-5 grid gap-3 sm:grid-cols-3">
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+      <p className="text-xs text-slate-400">Current Branch</p>
+      <p className="mt-2 break-all font-semibold text-sky-400">
+        {currentBranch || "Not loaded"}
+      </p>
+    </div>
+
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+      <p className="text-xs text-slate-400">Merge Status</p>
+      <p className="mt-2 font-semibold text-white">
+        {mergeStatus.inProgress ? "In Progress" : "No Active Merge"}
+      </p>
+    </div>
+
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+      <p className="text-xs text-slate-400">Conflicted Files</p>
+      <p className="mt-2 font-semibold text-white">
+        {mergeStatus.conflicts.length}
+      </p>
+    </div>
+  </div>
+
+  {!mergeStatus.inProgress && (
+    <div className="mt-5 rounded-xl border border-slate-800 p-4">
+      <h3 className="font-medium text-white">Merge a Branch</h3>
+      <p className="mt-1 text-sm text-slate-400">
+        The selected branch will be merged into your current branch.
+      </p>
+
+      <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+        <select
+          value={mergeBranchName}
+          onChange={(e) => setMergeBranchName(e.target.value)}
+          className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white"
+        >
+          <option value="">Select branch to merge</option>
+          {branches
+            .filter((branch) => branch !== currentBranch)
+            .map((branch) => (
+              <option key={branch} value={branch}>
+                {branch}
+              </option>
+            ))}
+        </select>
+
+        <button
+          type="button"
+          onClick={handleMergeBranch}
+          disabled={
+            mergeLoading ||
+            !mergeBranchName ||
+            !currentBranch ||
+            !scanPath.trim()
+          }
+          className="rounded-lg bg-sky-600 px-5 py-3 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+        >
+          {mergeLoading ? "Processing..." : "Merge Branch"}
+        </button>
+      </div>
+    </div>
+  )}
+
+  {mergeStatus.inProgress && (
+    <div className="mt-5 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="font-semibold text-amber-300">
+            Merge in Progress
+          </h3>
+          <p className="mt-1 text-sm text-slate-400">
+            Resolve all conflicting files before completing the merge.
+          </p>
+        </div>
+
+        <span className="rounded-full bg-amber-500/10 px-3 py-1 text-xs text-amber-300">
+          {mergeStatus.conflicts.length} conflicts
+        </span>
+      </div>
+
+      {mergeStatus.conflicts.map((file) => (
+        <div
+          key={file}
+          className="mt-3 rounded-lg border border-slate-800 bg-slate-950 p-3"
+        >
+          <p className="break-all text-sm font-medium text-white">
+            {file}
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => handleResolveConflict(file, "ours")}
+              disabled={mergeLoading}
+              className="rounded-lg border border-sky-500/40 px-3 py-2 text-xs text-sky-300 hover:bg-sky-500/10 disabled:opacity-50"
+            >
+              Use Current
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleResolveConflict(file, "theirs")}
+              disabled={mergeLoading}
+              className="rounded-lg border border-violet-500/40 px-3 py-2 text-xs text-violet-300 hover:bg-violet-500/10 disabled:opacity-50"
+            >
+              Use Incoming
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleResolveConflict(file, "manual")}
+              disabled={mergeLoading}
+              className="rounded-lg border border-emerald-500/40 px-3 py-2 text-xs text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+            >
+              Mark Resolved
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {mergeStatus.conflicts.length === 0 && (
+        <p className="mt-4 text-sm text-emerald-300">
+          No unresolved conflicts. You can complete the merge.
+        </p>
+      )}
+
+      <div className="mt-5 flex flex-wrap gap-3">
+        <button
+          type="button"
+          onClick={handleCompleteMerge}
+          disabled={mergeLoading || mergeStatus.conflicts.length > 0}
+          className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40"
+        >
+          Complete Merge
+        </button>
+
+        <button
+          type="button"
+          onClick={handleAbortMerge}
+          disabled={mergeLoading}
+          className="rounded-lg border border-red-500/40 px-4 py-2 text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+        >
+          Abort Merge
+        </button>
+      </div>
+    </div>
+  )}
+
+  {mergeMessage && (
+    <p className="mt-4 text-sm text-emerald-400">{mergeMessage}</p>
+  )}
+
+  {mergeError && (
+    <p className="mt-4 text-sm text-red-400">{mergeError}</p>
+  )}
+</section>
+
 
     {(() => {
   const selectedFile = gitInfo?.changedFiles.find(
