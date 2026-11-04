@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { jsPDF } from "jspdf";
 import {
   Activity,
   ArrowRight,
@@ -1366,6 +1367,173 @@ const handleAbortGitOperation = async () => {
   } finally {
     setOperationLoading(false);
   }
+};
+
+// ==========================================
+// EXPORT REPORTS
+// ==========================================
+
+const handleExportJSON = () => {
+  if (!scanResult) {
+    alert("Please scan a repository first.");
+    return;
+  }
+
+  const report = {
+    reportTitle: "Codebase X-Ray Analysis Report",
+    generatedAt: new Date().toISOString(),
+    projectPath: scanResult.root,
+    summary: {
+      totalFiles: scanResult.totalFiles,
+      analyzedFiles: scanResult.analyzedFiles,
+      dependencyCount: scanResult.dependencyCount,
+      circularDependencyCount: scanResult.circularDependencyCount,
+      averageDependencies: scanResult.averageDependencies,
+    },
+    extensionStats: scanResult.extensionStats,
+    circularDependencies: scanResult.circularDependencies,
+    sourceFiles: scanResult.sourceFiles,
+  };
+
+  const blob = new Blob(
+    [JSON.stringify(report, null, 2)],
+    { type: "application/json" }
+  );
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = "codebase-xray-report.json";
+  link.click();
+
+  URL.revokeObjectURL(url);
+};
+
+const handleExportPDF = () => {
+  if (!scanResult) {
+    alert("Please scan a repository first.");
+    return;
+  }
+
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  let y = 20;
+
+  const addText = (text: string, fontSize = 10) => {
+    doc.setFontSize(fontSize);
+
+    const lines = doc.splitTextToSize(text, pageWidth - 30);
+
+    if (y + lines.length * 6 > pageHeight - 20) {
+      doc.addPage();
+      y = 20;
+    }
+
+    doc.text(lines, 15, y);
+    y += lines.length * 6 + 3;
+  };
+
+  const addHeading = (heading: string) => {
+    if (y > pageHeight - 35) {
+      doc.addPage();
+      y = 20;
+    }
+
+    doc.setFont("helvetica", "bold");
+    addText(heading, 14);
+    doc.setFont("helvetica", "normal");
+  };
+
+  // Title
+  doc.setFont("helvetica", "bold");
+  addText("CODEBASE X-RAY", 20);
+
+  doc.setFont("helvetica", "normal");
+  addText("Codebase Analysis Report", 13);
+
+  addText(`Generated: ${new Date().toLocaleString()}`);
+  addText(`Project: ${scanResult.root}`);
+
+  y += 5;
+
+  // Project overview
+  addHeading("1. Project Overview");
+
+  addText(`Total Files: ${scanResult.totalFiles}`);
+  addText(`Analyzed Files: ${scanResult.analyzedFiles}`);
+  addText(`Dependencies: ${scanResult.dependencyCount}`);
+
+  addText(
+    `Circular Dependencies: ${scanResult.circularDependencyCount ?? 0}`
+  );
+
+  addText(
+    `Average Dependencies: ${scanResult.averageDependencies ?? 0}`
+  );
+
+  y += 5;
+
+  // Extension statistics
+  addHeading("2. File Extension Statistics");
+
+  if (scanResult.extensionStats) {
+    addText(JSON.stringify(scanResult.extensionStats, null, 2));
+  } else {
+    addText("No extension statistics available.");
+  }
+
+  y += 5;
+
+  // Circular dependencies
+  addHeading("3. Circular Dependencies");
+
+  if (
+    scanResult.circularDependencies &&
+    scanResult.circularDependencies.length > 0
+  ) {
+    addText(
+      JSON.stringify(scanResult.circularDependencies, null, 2)
+    );
+  } else {
+    addText("No circular dependencies detected.");
+  }
+
+  y += 5;
+
+  // File analysis
+  addHeading("4. File-wise Analysis");
+
+  scanResult.sourceFiles?.forEach((file, index) => {
+    addText(`${index + 1}. ${file.path}`, 10);
+    addText(`Extension: ${file.extension}`);
+    addText(`Imports: ${file.imports?.join(", ") || "None"}`);
+    addText(
+      `Local Dependencies: ${
+        file.localDependencies?.join(", ") || "None"
+      }`
+    );
+
+    y += 3;
+  });
+
+  // Footer
+  const pageCount = doc.getNumberOfPages();
+
+  for (let page = 1; page <= pageCount; page++) {
+    doc.setPage(page);
+    doc.setFontSize(8);
+    doc.text(
+      `Codebase X-Ray | Page ${page} of ${pageCount}`,
+      pageWidth / 2,
+      pageHeight - 10,
+      { align: "center" }
+    );
+  }
+
+  doc.save("codebase-xray-report.pdf");
 };
 
   async function handleScan() {
@@ -2886,6 +3054,50 @@ const diffSummary = useMemo(() => {
   <p className="text-xs text-gray-500">
     Cherry-pick and Revert create new commits. Existing commit history is preserved.
   </p>
+</section>
+
+{/* Export Reports */}
+<section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+  <div className="flex items-center gap-3">
+    <div className="p-2 bg-blue-100 rounded-lg">
+      <Download className="w-5 h-5 text-blue-600" />
+    </div>
+
+    <div>
+      <h2 className="text-lg font-semibold text-gray-900">
+        Export Analysis Report
+      </h2>
+      <p className="text-sm text-gray-500">
+        Download your codebase analysis in PDF or JSON format.
+      </p>
+    </div>
+  </div>
+
+  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <button
+      onClick={handleExportPDF}
+      disabled={!scanResult}
+      className="flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      <Download className="w-4 h-4" />
+      Export PDF Report
+    </button>
+
+    <button
+      onClick={handleExportJSON}
+      disabled={!scanResult}
+      className="flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      <Download className="w-4 h-4" />
+      Export JSON Report
+    </button>
+  </div>
+
+  {!scanResult && (
+    <p className="text-xs text-gray-500">
+      Scan a repository to enable report exports.
+    </p>
+  )}
 </section>
 
         <div className="rounded-lg border border-white/[0.07] p-4">
