@@ -1,5 +1,7 @@
 import express from "express";
 import cors from "cors";
+import "dotenv/config";
+import { analyzeSourceFile } from "./aiService.js";
 import fg from "fast-glob";
 import path from "node:path";
 import { access, readFile, stat } from "node:fs/promises";
@@ -1412,6 +1414,56 @@ app.post("/api/git-revert/abort", async (req, res) => {
     return res.status(400).json({
       success: false,
       message: error instanceof Error ? error.message : "Could not abort Revert",
+    });
+  }
+});
+
+// ==========================================
+// AI CODE ANALYSIS
+// ==========================================
+
+app.post("/api/ai/analyze", async (req, res) => {
+  try {
+    const { path: repoPath, filePath } = req.body;
+
+    if (
+      typeof repoPath !== "string" ||
+      !repoPath.trim() ||
+      typeof filePath !== "string" ||
+      !filePath.trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path and file path are required",
+      });
+    }
+
+    const result = await analyzeSourceFile(
+      repoPath.trim(),
+      filePath.trim()
+    );
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "AI analysis failed";
+
+    const statusCode =
+      message.includes("not configured") ||
+      message.includes("provider returned") ||
+      message.includes("invalid JSON") ||
+      message.includes("unexpected analysis")
+        ? 502
+        : 400;
+
+    return res.status(statusCode).json({
+      success: false,
+      message,
     });
   }
 });

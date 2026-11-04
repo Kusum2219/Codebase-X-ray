@@ -30,6 +30,7 @@ import {
   FileWarning,
   ShieldAlert,
   AlertTriangle,
+  Download,
   
 } from "lucide-react";
 import api from "./api";
@@ -237,6 +238,69 @@ const [operationCommitHash, setOperationCommitHash] = useState("");
 const [operationLoading, setOperationLoading] = useState(false);
 const [operationMessage, setOperationMessage] = useState("");
 const [operationError, setOperationError] = useState("");
+
+// AI Code Analysis
+const [aiAnalysis, setAiAnalysis] = useState<{
+  overallScore: number;
+  summary: string;
+  strengths: string[];
+  findings: {
+    severity: "critical" | "high" | "medium" | "low" | "info";
+    category: "bug" | "security" | "performance" | "quality";
+    title: string;
+    line: number | null;
+    description: string;
+    recommendation: string;
+    suggestedCode: string | null;
+  }[];
+} | null>(null);
+
+const [aiLoading, setAiLoading] = useState(false);
+const [aiError, setAiError] = useState("");
+
+const [aiFileSearch, setAiFileSearch] = useState("");
+const [aiFileFilter, setAiFileFilter] = useState<
+  "all" | "ready" | "skipped" | "unsupported"
+>("all");
+
+const AI_SUPPORTED_EXTENSIONS = [
+  ".js", ".jsx", ".ts", ".tsx",
+  ".mjs", ".cjs", ".py", ".java",
+  ".cpp", ".c", ".cs", ".go",
+  ".rs", ".php", ".rb", ".vue", ".svelte",
+];
+
+const aiFiles = scanResult?.sourceFiles ?? [];
+
+const filteredAIFiles = aiFiles.filter((file) => {
+  const extension = (file.extension || "").toLowerCase();
+  const isSupported = AI_SUPPORTED_EXTENSIONS.includes(extension);
+  const isSkipped = Boolean(file.skipped);
+
+  const matchesSearch = file.path
+    .toLowerCase()
+    .includes(aiFileSearch.toLowerCase().trim());
+
+  let matchesFilter = true;
+
+  if (aiFileFilter === "ready") {
+    matchesFilter = !isSkipped && isSupported;
+  } else if (aiFileFilter === "skipped") {
+    matchesFilter = isSkipped;
+  } else if (aiFileFilter === "unsupported") {
+    matchesFilter = !isSkipped && !isSupported;
+  }
+
+  return matchesSearch && matchesFilter;
+});
+
+const analyzableFileCount = aiFiles.filter(
+  (file) =>
+    !file.skipped &&
+    AI_SUPPORTED_EXTENSIONS.includes(
+      (file.extension || "").toLowerCase()
+    )
+).length;
 
 const [gitOperationStatus, setGitOperationStatus] = useState<{
   inProgress: boolean;
@@ -1548,6 +1612,10 @@ const handleExportPDF = () => {
     setSelectedFilePath(null);
     setFileSearch("");
     setGraphFilter("all");
+    setAiAnalysis(null);
+    setAiError("");
+    setAiFileSearch("");
+    setAiFileFilter("all");
 
     try {
       const response = await api.post("/scan", {
@@ -1636,6 +1704,66 @@ if (result.success) {
       setScanLoading(false);
     }
   }
+
+  // ==========================================
+// AI CODE ANALYSIS HANDLER
+// ==========================================
+
+const handleAIAnalysis = async () => {
+  if (!scanPath.trim()) {
+    setAiError("Please scan a repository first.");
+    return;
+  }
+
+  if (!selectedFilePath) {
+    setAiError("Please select a source file first.");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `The contents of "${selectedFilePath}" will be sent to your configured AI provider for analysis. Continue?`
+  );
+
+  if (!confirmed) return;
+
+  setAiLoading(true);
+  setAiError("");
+  setAiAnalysis(null);
+
+  try {
+    const response = await api.post("/ai/analyze", {
+      path: scanPath.trim(),
+      filePath: selectedFilePath,
+    });
+
+    if (!response.data.success) {
+      throw new Error(
+        response.data.message || "AI analysis failed"
+      );
+    }
+
+    setAiAnalysis(response.data.data);
+  } catch (error: unknown) {
+    const message =
+      typeof error === "object" &&
+      error !== null &&
+      "response" in error
+        ? (
+            error as {
+              response?: {
+                data?: { message?: string };
+              };
+            }
+          ).response?.data?.message
+        : error instanceof Error
+          ? error.message
+          : undefined;
+
+    setAiError(message || "Unable to analyze this file.");
+  } finally {
+    setAiLoading(false);
+  }
+};
 
   const filteredProjects = recentProjects.filter((project) =>
     `${project.name} ${project.language} ${project.path}`
@@ -2210,6 +2338,489 @@ const diffSummary = useMemo(() => {
                 </div>
               )}
             </section>
+{/* ==========================================
+    AI CODE REVIEW DASHBOARD
+========================================== */}
+
+<section className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+
+  {/* Dashboard Header */}
+  <div className="p-5 sm:p-6 border-b border-gray-200 bg-gradient-to-r from-slate-50 to-purple-50">
+    <div className="flex flex-wrap items-center justify-between gap-4">
+
+      <div className="flex items-center gap-3">
+        <div className="w-12 h-12 rounded-xl bg-purple-600 text-white flex items-center justify-center text-xl font-bold shadow-sm">
+          AI
+        </div>
+
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">
+            AI Code Review
+          </h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Intelligent code analysis and recommendations
+          </p>
+        </div>
+      </div>
+
+      <div className="text-xs font-medium px-3 py-2 rounded-full bg-purple-100 text-purple-700">
+        Powered by Gemini
+      </div>
+
+    </div>
+  </div>
+
+  <div className="p-5 sm:p-6 space-y-6">
+
+    {/* Top Summary */}
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+
+      <div className="rounded-xl border border-gray-200 p-4">
+        <p className="text-xs uppercase tracking-wide text-gray-500 font-semibold">
+          Total scanned files
+        </p>
+        <p className="text-2xl font-bold text-gray-900 mt-2">
+          {aiFiles.length}
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 p-4">
+        <p className="text-xs uppercase tracking-wide text-gray-500 font-semibold">
+          Ready for analysis
+        </p>
+        <p className="text-2xl font-bold text-green-600 mt-2">
+          {analyzableFileCount}
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 p-4">
+        <p className="text-xs uppercase tracking-wide text-gray-500 font-semibold">
+          Current findings
+        </p>
+        <p className="text-2xl font-bold text-purple-700 mt-2">
+          {aiAnalysis?.findings.length ?? "—"}
+        </p>
+      </div>
+
+    </div>
+
+    {/* File Explorer */}
+    <div className="border border-gray-200 rounded-xl overflow-hidden">
+
+      <div className="p-4 bg-gray-50 border-b border-gray-200">
+        <div className="flex flex-wrap justify-between items-center gap-3">
+          <div>
+            <h3 className="font-semibold text-gray-900">
+              Source Files
+            </h3>
+            <p className="text-xs text-gray-500 mt-1">
+              Select a supported file to review
+            </p>
+          </div>
+
+          <span className="text-xs text-gray-500">
+            {filteredAIFiles.length} files shown
+          </span>
+        </div>
+
+        <input
+          type="text"
+          value={aiFileSearch}
+          onChange={(e) => setAiFileSearch(e.target.value)}
+          placeholder="Search files..."
+          className="mt-4 w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+        />
+
+        <div className="flex flex-wrap gap-2 mt-3">
+          {(
+            [
+              ["all", "All files"],
+              ["ready", "Analyzable"],
+              ["skipped", "Skipped"],
+              ["unsupported", "Unsupported"],
+            ] as const
+          ).map(([filter, label]) => (
+            <button
+              key={filter}
+              onClick={() => setAiFileFilter(filter)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                aiFileFilter === filter
+                  ? "bg-purple-600 text-white"
+                  : "bg-white border border-gray-300 text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="max-h-64 overflow-y-auto divide-y divide-gray-100">
+
+        {!scanResult ? (
+          <p className="p-5 text-sm text-gray-500 text-center">
+            Scan a repository to see its files here.
+          </p>
+        ) : filteredAIFiles.length === 0 ? (
+          <p className="p-5 text-sm text-gray-500 text-center">
+            No files match this search or filter.
+          </p>
+        ) : (
+          filteredAIFiles.map((file) => {
+            const extension = (file.extension || "").toLowerCase();
+            const supported = AI_SUPPORTED_EXTENSIONS.includes(extension);
+            const skipped = Boolean(file.skipped);
+            const selectable = !skipped && supported;
+            const selected = selectedFilePath === file.path;
+
+            return (
+              <button
+                key={file.path}
+                type="button"
+                disabled={!selectable || aiLoading}
+                onClick={() => {
+                  setSelectedFilePath(file.path);
+                  setAiAnalysis(null);
+                  setAiError("");
+                }}
+                className={`w-full flex items-center justify-between gap-3 px-4 py-3 text-left transition ${
+                  selected
+                    ? "bg-purple-50 border-l-4 border-purple-600"
+                    : "hover:bg-gray-50 border-l-4 border-transparent"
+                } ${
+                  !selectable
+                    ? "opacity-60 cursor-not-allowed"
+                    : "cursor-pointer"
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="text-purple-600 shrink-0">
+                    {selectable ? "◈" : "◇"}
+                  </span>
+
+                  <span className="text-sm text-gray-800 truncate">
+                    {file.path}
+                  </span>
+                </div>
+
+                <span
+                  className={`text-[10px] shrink-0 px-2 py-1 rounded-full font-semibold ${
+                    skipped
+                      ? "bg-gray-200 text-gray-600"
+                      : supported
+                        ? "bg-green-100 text-green-700"
+                        : "bg-orange-100 text-orange-700"
+                  }`}
+                >
+                  {skipped
+                    ? "SKIPPED"
+                    : supported
+                      ? "READY"
+                      : "UNSUPPORTED"}
+                </span>
+              </button>
+            );
+          })
+        )}
+
+      </div>
+    </div>
+
+    {/* Selected File + Analyze */}
+    <div className="rounded-xl border border-purple-200 bg-purple-50 p-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">
+            Selected file
+          </p>
+
+          <p className="text-sm font-semibold text-gray-900 mt-1 break-all">
+            {selectedFilePath || "No file selected"}
+          </p>
+        </div>
+
+        <button
+          onClick={handleAIAnalysis}
+          disabled={
+            !scanResult ||
+            !selectedFilePath ||
+            !aiFiles.some(
+              (file) =>
+                file.path === selectedFilePath &&
+                !file.skipped &&
+                AI_SUPPORTED_EXTENSIONS.includes(
+                  (file.extension || "").toLowerCase()
+                )
+            ) ||
+            aiLoading
+          }
+          className="shrink-0 px-5 py-3 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
+        >
+          {aiLoading ? (
+            <>
+              <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Reviewing...
+            </>
+          ) : (
+            <>
+              <span>AI</span>
+              Analyze File
+            </>
+          )}
+        </button>
+
+      </div>
+
+      <p className="text-xs text-purple-700 mt-3">
+        The selected file's source code will be sent to your configured AI provider.
+      </p>
+    </div>
+
+    {/* Error */}
+    {aiError && (
+      <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
+        <p className="font-semibold">Analysis failed</p>
+        <p className="mt-1">{aiError}</p>
+      </div>
+    )}
+
+    {/* Loading */}
+    {aiLoading && (
+      <div className="border border-purple-100 rounded-xl p-6 text-center">
+        <div className="w-8 h-8 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mx-auto" />
+        <p className="font-semibold text-gray-800 mt-3">
+          Reviewing your code...
+        </p>
+        <p className="text-sm text-gray-500 mt-1">
+          Detecting bugs, security risks and quality issues.
+        </p>
+      </div>
+    )}
+
+    {/* Analysis Results */}
+    {aiAnalysis && (
+      <div className="space-y-5 pt-5 border-t border-gray-200">
+
+        {/* Score and Summary */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+          <div className="md:col-span-1 rounded-xl border border-purple-100 bg-purple-50 p-5 flex flex-col items-center justify-center">
+            <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">
+              Code quality score
+            </p>
+
+            <div
+              className="w-32 h-32 rounded-full mt-4 flex items-center justify-center"
+              style={{
+                background: `conic-gradient(#9333ea ${aiAnalysis.overallScore * 3.6}deg, #e9d5ff 0deg)`,
+              }}
+            >
+              <div className="w-24 h-24 rounded-full bg-white flex flex-col items-center justify-center">
+                <span className="text-3xl font-bold text-purple-700">
+                  {aiAnalysis.overallScore}
+                </span>
+                <span className="text-xs text-gray-500">/ 100</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-500 mt-3">
+              AI-estimated score
+            </p>
+          </div>
+
+          <div className="md:col-span-2 rounded-xl border border-gray-200 p-5">
+            <h3 className="font-semibold text-gray-900">
+              Review Summary
+            </h3>
+            <p className="text-sm text-gray-600 leading-6 mt-3">
+              {aiAnalysis.summary}
+            </p>
+
+            <div className="mt-5 pt-4 border-t border-gray-100">
+              <p className="text-xs text-gray-500 uppercase font-semibold">
+                Total findings
+              </p>
+              <p className="text-2xl font-bold text-gray-900 mt-1">
+                {aiAnalysis.findings.length}
+              </p>
+            </div>
+          </div>
+
+        </div>
+
+        {/* Severity Breakdown */}
+        <div>
+          <h3 className="font-semibold text-gray-900 mb-3">
+            Finding Breakdown
+          </h3>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {(
+              [
+                ["critical", "Critical", "bg-red-50 border-red-200 text-red-700"],
+                ["high", "High", "bg-orange-50 border-orange-200 text-orange-700"],
+                ["medium", "Medium", "bg-yellow-50 border-yellow-200 text-yellow-700"],
+                ["low", "Low", "bg-blue-50 border-blue-200 text-blue-700"],
+              ] as const
+            ).map(([severity, label, styles]) => {
+              const count = aiAnalysis.findings.filter(
+                (finding) => finding.severity === severity
+              ).length;
+
+              return (
+                <div
+                  key={severity}
+                  className={`rounded-xl border p-4 ${styles}`}
+                >
+                  <p className="text-xs font-semibold">{label}</p>
+                  <p className="text-2xl font-bold mt-2">{count}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Strengths */}
+        {aiAnalysis.strengths.length > 0 && (
+          <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+            <h3 className="font-semibold text-green-800">
+              Code Strengths
+            </h3>
+
+            <ul className="mt-3 space-y-2">
+              {aiAnalysis.strengths.map((strength, index) => (
+                <li
+                  key={index}
+                  className="text-sm text-green-800 flex gap-2"
+                >
+                  <span>✓</span>
+                  <span>{strength}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Findings */}
+        <div>
+          <h3 className="font-semibold text-gray-900 mb-3">
+            Detailed Findings
+          </h3>
+
+          {aiAnalysis.findings.length === 0 ? (
+            <div className="rounded-xl border border-green-200 bg-green-50 p-6 text-center">
+              <p className="font-semibold text-green-800">
+                No significant issues identified
+              </p>
+              <p className="text-sm text-green-700 mt-1">
+                The AI did not identify actionable findings in this file.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {aiAnalysis.findings.map((finding, index) => {
+                const severityStyles = {
+                  critical: "bg-red-100 text-red-700",
+                  high: "bg-orange-100 text-orange-700",
+                  medium: "bg-yellow-100 text-yellow-800",
+                  low: "bg-blue-100 text-blue-700",
+                  info: "bg-gray-100 text-gray-700",
+                };
+
+                return (
+                  <details
+                    key={`${finding.title}-${finding.line}-${index}`}
+                    className="group border border-gray-200 rounded-xl overflow-hidden"
+                  >
+                    <summary className="list-none cursor-pointer p-4 hover:bg-gray-50 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-sm text-gray-900">
+                            {finding.title}
+                          </span>
+
+                          <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-full ${severityStyles[finding.severity]}`}>
+                            {finding.severity}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-gray-500 mt-2">
+                          {finding.category}
+                          {finding.line !== null
+                            ? ` · Line ${finding.line}`
+                            : ""}
+                        </p>
+                      </div>
+
+                      <span className="text-gray-400 group-open:rotate-180 transition">
+                        ▼
+                      </span>
+                    </summary>
+
+                    <div className="p-4 border-t border-gray-100 space-y-4">
+
+                      <div>
+                        <p className="text-xs font-bold uppercase text-gray-500 mb-2">
+                          Description
+                        </p>
+                        <p className="text-sm text-gray-700 leading-6">
+                          {finding.description}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg bg-blue-50 border border-blue-100 p-3">
+                        <p className="text-xs font-bold uppercase text-blue-700 mb-2">
+                          Recommendation
+                        </p>
+                        <p className="text-sm text-blue-900 leading-6">
+                          {finding.recommendation}
+                        </p>
+                      </div>
+
+                      {finding.suggestedCode && (
+                        <div>
+                          <div className="flex justify-between items-center gap-2 mb-2">
+                            <p className="text-xs font-bold uppercase text-gray-500">
+                              Suggested Code
+                            </p>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                navigator.clipboard.writeText(
+                                  finding.suggestedCode || ""
+                                )
+                              }
+                              className="text-xs font-semibold text-purple-700 hover:text-purple-900"
+                            >
+                              Copy code
+                            </button>
+                          </div>
+
+                          <pre className="bg-gray-950 text-green-300 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap">
+                            {finding.suggestedCode}
+                          </pre>
+                        </div>
+                      )}
+
+                    </div>
+                  </details>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <p className="text-xs text-gray-400">
+          AI-generated findings are advisory. Verify recommendations and test changes before applying them.
+        </p>
+
+      </div>
+    )}
+
+  </div>
+</section>
 
             <section className="rounded-xl border border-white/[0.08] bg-[#111419] p-5">
   <div className="flex flex-wrap items-center justify-between gap-3">
