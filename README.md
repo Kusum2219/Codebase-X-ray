@@ -1,117 +1,198 @@
-Codebase X-Ray
+# Codebase X-Ray
 
-Understand your codebase. Trace dependencies. Assess the impact of code changes.
+**An AI-powered codebase analysis and Git management platform.**
 
-Codebase X-Ray is a developer tool designed to help engineers understand unfamiliar codebases and investigate the potential consequences of modifying source files.
+Codebase X-Ray is a full-stack developer tool that helps developers understand, visualize, analyze and manage complex codebases. It combines static code analysis, interactive dependency visualization, Git operations and AI-powered insights in one platform.
 
-The goal is to transform a repository's source code into an interactive architecture map, making dependencies, affected modules, and relevant tests easier to discover.
+## Overview
 
-«Project status: Early development. The repository currently contains the frontend scaffold. The code analysis engine, dependency graph, and impact analysis features are planned.»
+Understanding an unfamiliar codebase can be time-consuming. Developers often need to manually trace dependencies, identify circular imports, inspect project architecture and navigate Git operations.
 
-The Problem
+Codebase X-Ray brings these capabilities together to make codebase exploration and maintenance easier.
 
-When developers work in a large or unfamiliar application, a change to one file can affect multiple components, modules, API routes, or tests.
+## Key Features
 
-Understanding these relationships manually can be time-consuming and error-prone.
+### 1. Codebase Analysis
+- Scan and analyze project source files.
+- Extract functions, classes, imports and exports.
+- Identify circular dependencies.
+- Detect orphan files and dependency hotspots.
+- Analyze code metrics and risk scores.
+- Perform impact analysis to understand dependency relationships.
 
-Codebase X-Ray aims to help developers answer questions such as:
+### 2. Interactive Dependency Graph
+- Visualize relationships between source files.
+- Explore local imports and dependencies.
+- Identify circular dependency chains.
+- Navigate project structure through an interactive graph.
 
-- Which modules depend on this file or function?
-- What parts of the application could be affected by a proposed change?
-- Which tests are relevant to the modified code?
-- Where are the dependencies and architectural boundaries of this repository?
+### 3. Git Management
+Manage Git operations directly through the application:
 
-Project Vision
+- Stage and unstage changes.
+- Create commits.
+- Push and pull changes.
+- Manage branches.
+- Fetch remote updates and inspect repository status.
+- Manage Git stashes.
+- View and manage tags.
+- Perform cherry-pick and revert operations.
+- Detect and manage merge conflicts.
+- Continue or abort supported Git operations.
 
-The platform is being designed around four core capabilities:
+### 4. AI-Powered Intelligence
 
-1. Repository Architecture Mapping
+Powered by the Gemini API, Codebase X-Ray provides four AI capabilities:
 
-Analyze source files and build an interactive dependency graph showing relationships between modules.
+**AI Code Review**
+- Analyze source files for potential bugs and security issues.
+- Identify performance and code quality concerns.
+- Generate severity-based findings.
+- Provide explanations and suggested improvements.
 
-2. Change Impact Analysis
+**AI Project Architecture Intelligence**
+- Understand project architecture.
+- Identify architectural layers and key modules.
+- Explain data flow.
+- Highlight architectural risks and recommendations.
 
-Compare code changes and trace their potential impact through the dependency graph.
+**AI Code Explainer**
+- Explain individual functions and code symbols.
+- Understand complete source files.
+- Break down logic, parameters and return values.
 
-3. Test Discovery
+**AI Dependency Intelligence**
+- Analyze dependency health.
+- Explain circular dependencies.
+- Identify high-impact and orphan files.
+- Highlight risky dependency relationships.
+- Suggest architectural improvements.
 
-Identify existing tests connected to modified modules and highlight areas where test coverage may be missing.
+### 5. Report Generation
+- Export analysis reports in PDF format.
+- Export structured analysis data in JSON format.
 
-4. Codebase Exploration
+## Tech Stack
 
-Allow developers to navigate from a graph node to its source file and inspect the relationships surrounding it.
+| Layer | Technologies |
+|---|---|
+| Frontend | React.js, TypeScript, Vite |
+| Backend | Node.js, Express.js, TypeScript |
+| Visualization | React Flow (`@xyflow/react`) |
+| AI Integration | Google Gemini API |
+| Git Integration | simple-git |
+| Development | Git, npm |
 
-Planned Features
+## Project Architecture
 
-- GitHub repository integration
-- Source file and module dependency extraction
-- Interactive architecture visualization
-- Changed-file and downstream dependency analysis
-- Related test discovery
-- Risk indicators based on dependency depth and available test information
-- Repository analysis history
-- Optional AI-assisted explanations grounded in analyzed source code
-
-The initial implementation will focus on JavaScript and TypeScript repositories. Support for additional languages may be added later.
-
-How It Is Intended to Work
-
-1. A developer selects a supported repository.
-2. The analysis engine scans eligible source files.
-3. The engine extracts dependency relationships and builds a graph.
-4. The developer selects a file or compares a code change.
-5. The system displays potentially affected modules and relevant tests.
-
-The analysis is intended to be based on actual repository structure and source-level relationships, rather than relying solely on AI-generated summaries.
-
-Planned Technology Stack
-
-Layer| Technology
-Frontend| React, TypeScript, Vite
-UI and graph visualization| Tailwind CSS, React Flow
-Backend| Node.js, Express.js, TypeScript
-Code analysis| TypeScript Compiler API and AST-based parsing
-Database| PostgreSQL, Prisma ORM
-Repository integration| Git and GitHub API
-Testing| Vitest, Supertest, Playwright
-Deployment| Vercel, Render, managed PostgreSQL
-
-Technologies may evolve as the implementation and performance requirements become clearer.
-
-Project Structure
-
-The repository is expected to evolve into the following structure:
-
-codebase-xray/
-├── frontend/          # React application
-├── backend/           # API and repository analysis
-├── analyzer/          # Source parsing and dependency extraction
-├── docs/              # Architecture and technical documentation
-├── tests/             # Automated tests
-├── .gitignore
+```text
+Codebase-X-ray/
+│
+├── client/
+│   ├── src/
+│   │   ├── App.tsx
+│   │   ├── api.ts
+│   │   ├── DependencyGraph.tsx
+│   │   └── ...
+│   └── package.json
+│
+├── server/
+│   ├── src/
+│   │   ├── index.ts
+│   │   ├── aiService.ts
+│   │   ├── aiArchitectureService.ts
+│   │   ├── aiExplainerService.ts
+│   │   ├── aiDependencyService.ts
+│   │   └── ...
+│   └── package.json
+│
 └── README.md
+```
 
-Some directories are planned and may not exist yet.
+## Getting Started
 
-Getting Started
+### Prerequisites
 
-Prerequisites
-
-- Node.js (a supported current version)
+- Node.js
 - npm
 - Git
-- Visual Studio Code or another code editor
+- Google Gemini API key (for AI features)
 
-Run the current frontend scaffold
+### 1. Clone the repository
 
-Clone the repository:
+```bash
+git clone https://github.com/Kusum2219/Codebase-X-ray.git
+cd Codebase-X-ray
+```
 
-git clone https://github.com/YOUR-USERNAME/codebase-xray.git
-cd codebase-xray
+### 2. Install backend dependencies
 
-Install dependencies and start the frontend:
-
-cd frontend
+```bash
+cd server
 npm install
-npm run dev
+```
 
+### 3. Configure backend environment variables
+
+Create a `.env` file inside the `server` directory:
+
+```env
+AI_API_KEY=your_gemini_api_key
+AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+AI_MODEL=your_supported_gemini_model
+```
+
+Use a Gemini model available to your API key.
+
+**Security:** Never commit your `.env` file or expose your API key in frontend code.
+
+### 4. Start the backend
+
+```bash
+npm run dev
+```
+
+### 5. Install frontend dependencies
+
+Open another terminal:
+
+```bash
+cd client
+npm install
+```
+
+### 6. Start the frontend
+
+```bash
+npm run dev
+```
+
+Open the local URL displayed by Vite in your browser.
+
+## Build for Production
+
+Backend:
+
+```bash
+cd server
+npm run build
+```
+
+Frontend:
+
+```bash
+cd client
+npm run build
+```
+
+## Use Cases
+
+- Understanding unfamiliar or large codebases.
+- Visualizing project dependencies.
+- Finding circular imports and potential code risks.
+- Reviewing source code with AI assistance.
+- Understanding project architecture and code logic.
+- Managing common Git operations from one interface.
+- Generating code analysis reports.
+
+*Built to make codebases easier to understand, analyze and manage.*
