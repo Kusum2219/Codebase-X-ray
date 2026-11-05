@@ -36,6 +36,97 @@ import {
 import api from "./api";
 import DependencyGraph from "./DependencyGraph";
 
+type ArchitectureResult = {
+  projectName: string;
+  architectureType: string;
+  overview: string;
+
+  layers: {
+    name: string;
+    purpose: string;
+    files: string[];
+  }[];
+
+  keyModules: {
+    name: string;
+    responsibility: string;
+    files: string[];
+    dependencies: string[];
+  }[];
+
+  dataFlow: {
+    step: string;
+    description: string;
+  }[];
+
+  risks: {
+    severity: "critical" | "high" | "medium" | "low";
+    title: string;
+    description: string;
+    affectedFiles: string[];
+    recommendation: string;
+  }[];
+
+  recommendations: {
+    priority: "high" | "medium" | "low";
+    title: string;
+    description: string;
+    action: string;
+  }[];
+
+  strengths: string[];
+};
+
+type CodeExplanation = {
+  symbolName: string;
+  kind: string;
+  summary: string;
+  purpose: string;
+  parameters: {
+    name: string;
+    type: string;
+    description: string;
+  }[];
+  returnValue: string;
+  executionFlow: string[];
+  dependencies: string[];
+  potentialIssues: string[];
+  exampleUsage: string;
+};
+type DependencyIntelligenceResult = {
+  summary: string;
+  healthAssessment: string;
+  circularDependencyAnalysis: {
+    involvedFiles: string[];
+    explanation: string;
+    impact: string;
+    recommendation: string;
+  }[];
+  highImpactFiles: {
+    file: string;
+    reason: string;
+    risk: "high" | "medium" | "low";
+    recommendation: string;
+  }[];
+  orphanFileAnalysis: {
+    file: string;
+    explanation: string;
+    recommendation: string;
+  }[];
+  riskyRelationships: {
+    source: string;
+    target: string;
+    reason: string;
+    severity: "high" | "medium" | "low";
+  }[];
+  recommendations: {
+    priority: "high" | "medium" | "low";
+    title: string;
+    description: string;
+    action: string;
+  }[];
+};
+
 type ApiState = "connecting" | "connected" | "error";
 type GraphFilter = "all" | "connected";
 
@@ -313,6 +404,27 @@ const [gitOperationStatus, setGitOperationStatus] = useState<{
   hasConflicts: false,
   conflicts: [],
 });
+
+const [architectureResult, setArchitectureResult] =
+  useState<ArchitectureResult | null>(null);
+
+const [architectureLoading, setArchitectureLoading] =
+  useState(false);
+
+const [architectureError, setArchitectureError] =
+  useState("");
+
+  const [explainerSymbol, setExplainerSymbol] = useState("");
+const [explainerResult, setExplainerResult] =
+  useState<CodeExplanation | null>(null);
+const [explainerLoading, setExplainerLoading] = useState(false);
+const [explainerError, setExplainerError] = useState("");
+
+const [dependencyAIResult, setDependencyAIResult] =
+  useState<DependencyIntelligenceResult | null>(null);
+
+const [dependencyAILoading, setDependencyAILoading] = useState(false);
+const [dependencyAIError, setDependencyAIError] = useState("");
 
 const [gitActionLoading, setGitActionLoading] = useState(false);
 const [gitActionMessage, setGitActionMessage] = useState("");
@@ -1452,9 +1564,9 @@ const handleExportJSON = () => {
       analyzedFiles: scanResult.analyzedFiles,
       dependencyCount: scanResult.dependencyCount,
       circularDependencyCount: scanResult.circularDependencyCount,
-      averageDependencies: scanResult.averageDependencies,
+      
     },
-    extensionStats: scanResult.extensionStats,
+    
     circularDependencies: scanResult.circularDependencies,
     sourceFiles: scanResult.sourceFiles,
   };
@@ -1535,21 +1647,12 @@ const handleExportPDF = () => {
   );
 
   addText(
-    `Average Dependencies: ${scanResult.averageDependencies ?? 0}`
-  );
-
-  y += 5;
-
-  // Extension statistics
-  addHeading("2. File Extension Statistics");
-
-  if (scanResult.extensionStats) {
-    addText(JSON.stringify(scanResult.extensionStats, null, 2));
-  } else {
-    addText("No extension statistics available.");
-  }
-
-  y += 5;
+  (
+    scanResult.dependencyCount /
+    Math.max(scanResult.analyzedFiles, 1)
+  ).toFixed(2)
+);
+y += 5;
 
   // Circular dependencies
   addHeading("3. Circular Dependencies");
@@ -1616,6 +1719,10 @@ const handleExportPDF = () => {
     setAiError("");
     setAiFileSearch("");
     setAiFileFilter("all");
+    setArchitectureResult(null);
+    setArchitectureError("");
+    setDependencyAIResult(null);
+    setDependencyAIError("");
 
     try {
       const response = await api.post("/scan", {
@@ -1762,6 +1869,130 @@ const handleAIAnalysis = async () => {
     setAiError(message || "Unable to analyze this file.");
   } finally {
     setAiLoading(false);
+  }
+};
+
+const handleArchitectureAnalysis = async () => {
+  if (!scanResult) {
+    setArchitectureError("Please scan a project first.");
+    return;
+  }
+
+  setArchitectureLoading(true);
+  setArchitectureError("");
+  setArchitectureResult(null);
+
+  try {
+    const response = await api.post("/ai/architecture", {
+      projectData: {
+        root: scanResult.root,
+        totalFiles: scanResult.totalFiles,
+        analyzedFiles: scanResult.analyzedFiles,
+        dependencyCount: scanResult.dependencyCount,
+        circularDependencyCount:
+          scanResult.circularDependencyCount,
+        
+        circularDependencies: scanResult.circularDependencies,
+        sourceFiles: scanResult.sourceFiles,
+      },
+    });
+
+    if (!response.data.success) {
+      throw new Error(
+        response.data.message || "Architecture analysis failed"
+      );
+    }
+
+    setArchitectureResult(response.data.data);
+  } catch (error: any) {
+    console.error("Architecture analysis error:", error);
+
+    setArchitectureError(
+      error.response?.data?.message ||
+      error.message ||
+      "Failed to analyze project architecture."
+    );
+  } finally {
+    setArchitectureLoading(false);
+  }
+};
+
+const handleCodeExplanation = async () => {
+  if (!scanResult || !selectedFilePath) {
+    setExplainerError("Please scan a project and select a file first.");
+    return;
+  }
+
+  setExplainerLoading(true);
+  setExplainerError("");
+  setExplainerResult(null);
+
+  try {
+    const response = await api.post("/ai/explain", {
+      path: scanPath.trim(),
+      filePath: selectedFilePath,
+      symbolName: explainerSymbol.trim(),
+    });
+
+    if (!response.data.success) {
+      throw new Error(
+        response.data.message || "Code explanation failed."
+      );
+    }
+
+    setExplainerResult(response.data.data);
+  } catch (error: any) {
+    console.error("AI Code Explainer error:", error);
+
+    setExplainerError(
+      error.response?.data?.message ||
+      error.message ||
+      "Failed to explain code."
+    );
+  } finally {
+    setExplainerLoading(false);
+  }
+};
+const handleDependencyAIAnalysis = async () => {
+  if (!scanResult) {
+    setDependencyAIError("Please scan a project first.");
+    return;
+  }
+
+  setDependencyAILoading(true);
+  setDependencyAIError("");
+  setDependencyAIResult(null);
+
+  try {
+    const response = await api.post("/ai/dependencies", {
+      projectData: {
+        root: scanResult.root,
+        totalFiles: scanResult.totalFiles,
+        analyzedFiles: scanResult.analyzedFiles,
+        dependencyCount: scanResult.dependencyCount,
+        circularDependencyCount: scanResult.circularDependencyCount,
+        circularDependencies: scanResult.circularDependencies,
+        sourceFiles: scanResult.sourceFiles,
+      },
+    });
+
+    if (!response.data.success) {
+      throw new Error(
+        response.data.message || "Dependency analysis failed."
+      );
+    }
+
+    setDependencyAIResult(response.data.data);
+  } catch (error: any) {
+    console.error("AI dependency analysis error:", error);
+
+    setDependencyAIError(
+      error.response?.data?.message ||
+      error.message ||
+      "Failed to analyze project dependencies."
+    );
+  } finally {
+    setDependencyAILoading(false);
   }
 };
 
@@ -2820,6 +3051,907 @@ const diffSummary = useMemo(() => {
     )}
 
   </div>
+</section>
+
+{/* ==========================================
+    AI PROJECT ARCHITECTURE INTELLIGENCE
+========================================== */}
+
+<section className="mt-10 space-y-6">
+
+  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+
+    <div>
+      <div className="flex items-center gap-2">
+        <h2 className="text-2xl font-bold text-white">
+          Project Architecture Intelligence
+        </h2>
+
+        <span className="text-xs px-2 py-1 rounded-full bg-purple-500/20 text-purple-300">
+          AI Powered
+        </span>
+      </div>
+
+      <p className="text-sm text-gray-400 mt-2">
+        Understand your project structure, modules,
+        dependencies and architectural risks.
+      </p>
+    </div>
+
+    <button
+      onClick={handleArchitectureAnalysis}
+      disabled={!scanResult || architectureLoading}
+      className="px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-500
+      text-white font-semibold disabled:opacity-50
+      disabled:cursor-not-allowed transition-all"
+    >
+      {architectureLoading
+        ? "Analyzing Architecture..."
+        : architectureResult
+          ? "Re-analyze Architecture"
+          : "Analyze Project Architecture"}
+    </button>
+
+  </div>
+
+  {!scanResult && (
+    <div className="rounded-xl border border-gray-700 bg-gray-900 p-6 text-gray-400">
+      Scan a project first to analyze its architecture.
+    </div>
+  )}
+
+  {architectureLoading && (
+    <div className="rounded-xl border border-purple-500/30 bg-gray-900 p-8 text-center">
+      <div className="animate-spin h-10 w-10 border-4 border-purple-500 border-t-transparent rounded-full mx-auto mb-4" />
+
+      <h3 className="text-white font-semibold">
+        Understanding Your Project...
+      </h3>
+
+      <p className="text-gray-400 text-sm mt-2">
+        Analyzing modules, dependencies and architecture.
+      </p>
+    </div>
+  )}
+
+  {architectureError && (
+    <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+      <p className="text-red-300 font-medium">
+        Architecture Analysis Failed
+      </p>
+
+      <p className="text-sm text-red-200 mt-1">
+        {architectureError}
+      </p>
+
+      <button
+        onClick={handleArchitectureAnalysis}
+        className="mt-3 text-sm text-red-300 underline"
+      >
+        Try Again
+      </button>
+    </div>
+  )}
+
+  {architectureResult && (
+    <div className="space-y-6">
+
+      {/* OVERVIEW */}
+
+      <div className="rounded-2xl border border-purple-500/30 bg-gray-900 p-6">
+
+        <div className="flex flex-wrap justify-between gap-3">
+
+          <div>
+            <p className="text-xs uppercase tracking-wider text-purple-300">
+              Detected Architecture
+            </p>
+
+            <h3 className="text-2xl font-bold text-white mt-2">
+              {architectureResult.architectureType}
+            </h3>
+
+            <p className="text-sm text-gray-400 mt-1">
+              {architectureResult.projectName}
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-purple-500/10 px-4 py-3 self-start">
+            <p className="text-xs text-gray-400">
+              Architecture Layers
+            </p>
+
+            <p className="text-2xl font-bold text-purple-300">
+              {architectureResult.layers.length}
+            </p>
+          </div>
+
+        </div>
+
+        <div className="mt-5 border-t border-gray-700 pt-5">
+
+          <h4 className="text-white font-semibold mb-2">
+            Architecture Overview
+          </h4>
+
+          <p className="text-gray-300 text-sm leading-7">
+            {architectureResult.overview}
+          </p>
+
+        </div>
+
+      </div>
+
+      {/* ARCHITECTURE LAYERS */}
+
+      <div>
+        <h3 className="text-lg font-bold text-white mb-4">
+          Architecture Layers
+        </h3>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+
+          {architectureResult.layers.map((layer, index) => (
+            <div
+              key={`${layer.name}-${index}`}
+              className="rounded-xl border border-gray-700 bg-gray-900 p-5"
+            >
+              <h4 className="text-purple-300 font-semibold">
+                {layer.name}
+              </h4>
+
+              <p className="text-sm text-gray-400 mt-2 leading-6">
+                {layer.purpose}
+              </p>
+
+              <div className="mt-4 space-y-2">
+                <p className="text-xs uppercase text-gray-500">
+                  Related Files
+                </p>
+
+                {layer.files.map((file, fileIndex) => (
+                  <p
+                    key={`${file}-${fileIndex}`}
+                    className="text-xs text-gray-300 break-all font-mono"
+                  >
+                    {file}
+                  </p>
+                ))}
+
+                {layer.files.length === 0 && (
+                  <p className="text-xs text-gray-500">
+                    No files identified.
+                  </p>
+                )}
+              </div>
+            </div>
+          ))}
+
+        </div>
+      </div>
+
+      {/* KEY MODULES */}
+
+      <div>
+        <h3 className="text-lg font-bold text-white mb-4">
+          Key Project Modules
+        </h3>
+
+        <div className="space-y-3">
+
+          {architectureResult.keyModules.map((module, index) => (
+            <details
+              key={`${module.name}-${index}`}
+              className="group rounded-xl border border-gray-700 bg-gray-900 p-5"
+            >
+              <summary className="cursor-pointer flex justify-between gap-3">
+                <span className="font-semibold text-white">
+                  {module.name}
+                </span>
+
+                <span className="text-purple-300 text-sm">
+                  View Details +
+                </span>
+              </summary>
+
+              <div className="mt-4 space-y-4">
+
+                <p className="text-sm text-gray-300 leading-6">
+                  {module.responsibility}
+                </p>
+
+                <div>
+                  <p className="text-xs uppercase text-gray-500 mb-2">
+                    Files
+                  </p>
+
+                  {module.files.map((file, i) => (
+                    <p key={i} className="text-xs text-gray-300 font-mono mb-1 break-all">
+                      {file}
+                    </p>
+                  ))}
+                </div>
+
+                <div>
+                  <p className="text-xs uppercase text-gray-500 mb-2">
+                    Dependencies
+                  </p>
+
+                  {module.dependencies.map((dependency, i) => (
+                    <span
+                      key={i}
+                      className="inline-block text-xs bg-blue-500/10 text-blue-300 px-2 py-1 rounded mr-2 mb-2"
+                    >
+                      {dependency}
+                    </span>
+                  ))}
+                </div>
+
+              </div>
+            </details>
+          ))}
+
+        </div>
+      </div>
+
+      {/* DATA FLOW */}
+
+      <div className="rounded-xl border border-gray-700 bg-gray-900 p-6">
+
+        <h3 className="text-lg font-bold text-white mb-5">
+          Application Data Flow
+        </h3>
+
+        <div className="space-y-5">
+
+          {architectureResult.dataFlow.map((flow, index) => (
+            <div key={`${flow.step}-${index}`} className="flex gap-4">
+
+              <div className="flex flex-col items-center">
+
+                <div className="h-9 w-9 rounded-full bg-purple-500/20 text-purple-300 flex items-center justify-center font-bold text-sm">
+                  {index + 1}
+                </div>
+
+                {index !== architectureResult.dataFlow.length - 1 && (
+                  <div className="w-px flex-1 min-h-8 bg-gray-700 mt-2" />
+                )}
+
+              </div>
+
+              <div className="pb-4">
+                <h4 className="text-white font-semibold">
+                  {flow.step}
+                </h4>
+
+                <p className="text-sm text-gray-400 mt-1 leading-6">
+                  {flow.description}
+                </p>
+              </div>
+
+            </div>
+          ))}
+
+        </div>
+      </div>
+
+      {/* ARCHITECTURAL RISKS */}
+
+      <div>
+
+        <h3 className="text-lg font-bold text-white mb-4">
+          Architectural Risks
+        </h3>
+
+        <div className="space-y-3">
+
+          {architectureResult.risks.map((risk, index) => {
+
+            const severityColors = {
+              critical: "text-red-300 bg-red-500/10 border-red-500/30",
+              high: "text-orange-300 bg-orange-500/10 border-orange-500/30",
+              medium: "text-yellow-300 bg-yellow-500/10 border-yellow-500/30",
+              low: "text-blue-300 bg-blue-500/10 border-blue-500/30",
+            };
+
+            return (
+              <div
+                key={`${risk.title}-${index}`}
+                className="rounded-xl border border-gray-700 bg-gray-900 p-5"
+              >
+
+                <div className="flex flex-wrap items-center gap-3">
+
+                  <span className={`text-xs uppercase px-2 py-1 rounded border ${severityColors[risk.severity]}`}>
+                    {risk.severity}
+                  </span>
+
+                  <h4 className="font-semibold text-white">
+                    {risk.title}
+                  </h4>
+
+                </div>
+
+                <p className="text-sm text-gray-400 mt-3 leading-6">
+                  {risk.description}
+                </p>
+
+                <p className="text-xs text-gray-500 mt-3">
+                  Affected Files
+                </p>
+
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {risk.affectedFiles.map((file, i) => (
+                    <span
+                      key={i}
+                      className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded"
+                    >
+                      {file}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="mt-4 border-t border-gray-700 pt-3">
+                  <p className="text-xs text-purple-300 font-semibold">
+                    Recommended Solution
+                  </p>
+
+                  <p className="text-sm text-gray-300 mt-1">
+                    {risk.recommendation}
+                  </p>
+                </div>
+
+              </div>
+            );
+          })}
+
+          {architectureResult.risks.length === 0 && (
+            <p className="text-sm text-gray-400 rounded-xl bg-gray-900 p-5 border border-gray-700">
+              No significant architectural risks were identified from the available project metadata.
+            </p>
+          )}
+
+        </div>
+      </div>
+
+      {/* RECOMMENDATIONS */}
+
+      <div className="rounded-xl border border-gray-700 bg-gray-900 p-6">
+
+        <h3 className="text-lg font-bold text-white mb-4">
+          Improvement Recommendations
+        </h3>
+
+        <div className="space-y-4">
+
+          {architectureResult.recommendations.map((item, index) => (
+            <div
+              key={`${item.title}-${index}`}
+              className="border-b border-gray-800 pb-4 last:border-0"
+            >
+
+              <div className="flex flex-wrap items-center gap-3">
+
+                <span className={`text-xs px-2 py-1 rounded ${
+                  item.priority === "high"
+                    ? "bg-red-500/10 text-red-300"
+                    : item.priority === "medium"
+                      ? "bg-yellow-500/10 text-yellow-300"
+                      : "bg-blue-500/10 text-blue-300"
+                }`}>
+                  {item.priority.toUpperCase()} PRIORITY
+                </span>
+
+                <h4 className="text-white font-semibold">
+                  {item.title}
+                </h4>
+
+              </div>
+
+              <p className="text-sm text-gray-400 mt-2">
+                {item.description}
+              </p>
+
+              <p className="text-sm text-purple-300 mt-2">
+                Action: {item.action}
+              </p>
+
+            </div>
+          ))}
+
+          {architectureResult.recommendations.length === 0 && (
+            <p className="text-sm text-gray-400">
+              No specific recommendations returned.
+            </p>
+          )}
+
+        </div>
+      </div>
+
+      {/* STRENGTHS */}
+
+      <div className="rounded-xl border border-green-500/20 bg-gray-900 p-6">
+
+        <h3 className="text-lg font-bold text-white mb-4">
+          Architecture Strengths
+        </h3>
+
+        <div className="space-y-3">
+
+          {architectureResult.strengths.map((strength, index) => (
+            <div key={index} className="flex gap-3 items-start">
+
+              <span className="text-green-400">✓</span>
+
+              <p className="text-sm text-gray-300">
+                {strength}
+              </p>
+
+            </div>
+          ))}
+
+          {architectureResult.strengths.length === 0 && (
+            <p className="text-sm text-gray-400">
+              No strengths were identified from the available metadata.
+            </p>
+          )}
+
+        </div>
+      </div>
+
+    </div>
+  )}
+
+</section>
+
+<section className="mt-8 rounded-2xl border border-cyan-500/20 bg-slate-900/70 p-6 shadow-xl">
+  <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="text-2xl">✦</span>
+        <h2 className="text-xl font-bold text-white">
+          AI Code Explainer
+        </h2>
+      </div>
+      <p className="mt-1 text-sm text-slate-400">
+        Understand functions, components, classes and their execution flow.
+      </p>
+    </div>
+
+    <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-300">
+      Powered by Gemini
+    </span>
+  </div>
+
+  <div className="grid gap-4 md:grid-cols-[1fr_auto]">
+    <div>
+      <label className="mb-2 block text-sm font-medium text-slate-300">
+        Function / Component / Class name
+      </label>
+
+      <input
+        value={explainerSymbol}
+        onChange={(e) => setExplainerSymbol(e.target.value)}
+        placeholder="e.g. handleScan, App, DependencyGraph..."
+        className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-500"
+      />
+
+      <p className="mt-2 text-xs text-slate-500">
+        Leave empty to explain the complete selected file.
+      </p>
+    </div>
+
+    <div className="flex items-end">
+      <button
+        onClick={handleCodeExplanation}
+        disabled={!selectedFilePath || explainerLoading}
+        className="w-full rounded-xl bg-cyan-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto"
+      >
+        {explainerLoading ? "Explaining..." : "Explain Code"}
+      </button>
+    </div>
+  </div>
+
+  {selectedFilePath && (
+    <div className="mt-4 rounded-lg bg-slate-950 px-4 py-3 text-sm text-slate-400">
+      Selected file:
+      <span className="ml-2 break-all font-medium text-cyan-300">
+        {selectedFilePath}
+      </span>
+    </div>
+  )}
+
+  {explainerError && (
+    <div className="mt-5 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+      {explainerError}
+    </div>
+  )}
+
+  {explainerLoading && (
+    <div className="mt-6 rounded-xl border border-slate-700 bg-slate-950 p-6 text-center">
+      <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-cyan-400" />
+      <p className="text-sm font-medium text-white">
+        AI is understanding your code...
+      </p>
+      <p className="mt-1 text-xs text-slate-500">
+        Analyzing code structure and execution flow.
+      </p>
+    </div>
+  )}
+
+  {explainerResult && !explainerLoading && (
+    <div className="mt-6 space-y-5">
+      <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-5">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <h3 className="text-lg font-bold text-white">
+            {explainerResult.symbolName || "Code Explanation"}
+          </h3>
+
+          <span className="rounded-md bg-cyan-500/15 px-2 py-1 text-xs text-cyan-300">
+            {explainerResult.kind}
+          </span>
+        </div>
+
+        <p className="text-sm leading-7 text-slate-300">
+          {explainerResult.summary}
+        </p>
+      </div>
+
+      <div>
+        <h3 className="mb-2 font-semibold text-white">Purpose</h3>
+        <p className="text-sm leading-7 text-slate-400">
+          {explainerResult.purpose}
+        </p>
+      </div>
+
+      <div>
+        <h3 className="mb-3 font-semibold text-white">
+          Parameters
+        </h3>
+
+        {explainerResult.parameters.length > 0 ? (
+          <div className="space-y-2">
+            {explainerResult.parameters.map((parameter, index) => (
+              <div
+                key={`${parameter.name}-${index}`}
+                className="rounded-lg border border-slate-700 bg-slate-950 p-3"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <code className="text-sm text-cyan-300">
+                    {parameter.name}
+                  </code>
+                  <span className="text-xs text-slate-500">
+                    {parameter.type}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-slate-400">
+                  {parameter.description}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">
+            No parameters identified.
+          </p>
+        )}
+      </div>
+
+      <div>
+        <h3 className="mb-2 font-semibold text-white">Return Value</h3>
+        <p className="text-sm leading-7 text-slate-400">
+          {explainerResult.returnValue}
+        </p>
+      </div>
+
+      <div>
+        <h3 className="mb-3 font-semibold text-white">Execution Flow</h3>
+
+        <div className="space-y-3">
+          {explainerResult.executionFlow.map((step, index) => (
+            <div key={index} className="flex gap-3">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cyan-500/15 text-xs font-bold text-cyan-300">
+                {index + 1}
+              </span>
+              <p className="pt-1 text-sm leading-6 text-slate-400">
+                {step}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-5 md:grid-cols-2">
+        <div>
+          <h3 className="mb-3 font-semibold text-white">Dependencies</h3>
+          {explainerResult.dependencies.length > 0 ? (
+            <ul className="space-y-2">
+              {explainerResult.dependencies.map((item, index) => (
+                <li
+                  key={index}
+                  className="rounded-lg bg-slate-950 px-3 py-2 text-sm text-slate-400"
+                >
+                  {item}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">None identified.</p>
+          )}
+        </div>
+
+        <div>
+          <h3 className="mb-3 font-semibold text-white">
+            Potential Issues
+          </h3>
+          {explainerResult.potentialIssues.length > 0 ? (
+            <ul className="space-y-2">
+              {explainerResult.potentialIssues.map((item, index) => (
+                <li
+                  key={index}
+                  className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-sm text-amber-200"
+                >
+                  {item}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">
+              No obvious issues identified.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {explainerResult.exampleUsage && (
+        <div>
+          <h3 className="mb-2 font-semibold text-white">Example Usage</h3>
+          <pre className="overflow-x-auto whitespace-pre-wrap rounded-xl border border-slate-700 bg-slate-950 p-4 text-sm text-emerald-300">
+            {explainerResult.exampleUsage}
+          </pre>
+        </div>
+      )}
+    </div>
+  )}
+</section>
+
+<section className="mt-8 rounded-2xl border border-violet-500/20 bg-slate-900/70 p-6 shadow-xl">
+  <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h2 className="text-xl font-bold text-white">
+        AI Dependency Intelligence
+      </h2>
+      <p className="mt-1 text-sm text-slate-400">
+        Understand dependency risks, circular imports and project relationships.
+      </p>
+    </div>
+
+    <button
+      onClick={handleDependencyAIAnalysis}
+      disabled={!scanResult || dependencyAILoading}
+      className="rounded-xl bg-violet-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {dependencyAILoading ? "Analyzing..." : "Analyze Dependencies"}
+    </button>
+  </div>
+
+  {dependencyAIError && (
+    <div className="mb-5 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+      {dependencyAIError}
+    </div>
+  )}
+
+  {dependencyAILoading && (
+    <div className="rounded-xl border border-slate-700 bg-slate-950 p-6 text-center">
+      <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-violet-400" />
+      <p className="text-sm text-white">
+        AI is analyzing your dependency structure...
+      </p>
+    </div>
+  )}
+
+  {dependencyAIResult && !dependencyAILoading && (
+    <div className="space-y-6">
+      <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 p-5">
+        <h3 className="mb-2 font-semibold text-white">
+          Dependency Health Overview
+        </h3>
+        <p className="text-sm leading-7 text-slate-300">
+          {dependencyAIResult.summary}
+        </p>
+        <p className="mt-3 text-sm leading-7 text-slate-400">
+          {dependencyAIResult.healthAssessment}
+        </p>
+      </div>
+
+      <div>
+        <h3 className="mb-3 font-semibold text-white">
+          Circular Dependency Analysis
+        </h3>
+
+        {dependencyAIResult.circularDependencyAnalysis.length === 0 ? (
+          <p className="rounded-lg bg-slate-950 p-4 text-sm text-slate-400">
+            No circular dependency findings were returned by AI.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {dependencyAIResult.circularDependencyAnalysis.map((item, index) => (
+              <div
+                key={index}
+                className="rounded-xl border border-red-500/20 bg-red-500/5 p-4"
+              >
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {item.involvedFiles.map((file, fileIndex) => (
+                    <code
+                      key={fileIndex}
+                      className="rounded bg-slate-950 px-2 py-1 text-xs text-red-300"
+                    >
+                      {file}
+                    </code>
+                  ))}
+                </div>
+                <p className="text-sm text-slate-300">
+                  {item.explanation}
+                </p>
+                <p className="mt-2 text-sm text-slate-400">
+                  **Impact:** {item.impact}
+                </p>
+                <p className="mt-2 text-sm text-emerald-300">
+                  **Recommendation:** {item.recommendation}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h3 className="mb-3 font-semibold text-white">
+          High-Impact Files
+        </h3>
+
+        {dependencyAIResult.highImpactFiles.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            No high-impact files identified from the supplied metadata.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {dependencyAIResult.highImpactFiles.map((item, index) => (
+              <div
+                key={index}
+                className="rounded-xl border border-slate-700 bg-slate-950 p-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <code className="break-all text-sm text-violet-300">
+                    {item.file}
+                  </code>
+                  <span className={`rounded-full px-2 py-1 text-xs ${
+                    item.risk === "high"
+                      ? "bg-red-500/15 text-red-300"
+                      : item.risk === "medium"
+                      ? "bg-amber-500/15 text-amber-300"
+                      : "bg-slate-700 text-slate-300"
+                  }`}>
+                    {item.risk} risk
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-slate-400">
+                  {item.reason}
+                </p>
+                <p className="mt-2 text-sm text-emerald-300">
+                  {item.recommendation}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h3 className="mb-3 font-semibold text-white">
+          Orphan File Analysis
+        </h3>
+
+        {dependencyAIResult.orphanFileAnalysis.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            No orphan file findings were returned.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {dependencyAIResult.orphanFileAnalysis.map((item, index) => (
+              <div
+                key={index}
+                className="rounded-xl border border-slate-700 bg-slate-950 p-4"
+              >
+                <code className="break-all text-sm text-amber-300">
+                  {item.file}
+                </code>
+                <p className="mt-2 text-sm text-slate-400">
+                  {item.explanation}
+                </p>
+                <p className="mt-2 text-sm text-emerald-300">
+                  {item.recommendation}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h3 className="mb-3 font-semibold text-white">
+          Risky Dependency Relationships
+        </h3>
+
+        {dependencyAIResult.riskyRelationships.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            No risky relationships identified from the available metadata.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {dependencyAIResult.riskyRelationships.map((item, index) => (
+              <div
+                key={index}
+                className="rounded-xl border border-slate-700 bg-slate-950 p-4"
+              >
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <code className="break-all text-cyan-300">
+                    {item.source}
+                  </code>
+                  <span className="text-slate-500">→</span>
+                  <code className="break-all text-violet-300">
+                    {item.target}
+                  </code>
+                </div>
+                <p className="mt-2 text-sm text-slate-400">
+                  {item.reason}
+                </p>
+                <span className="mt-2 inline-block text-xs text-amber-300">
+                  {item.severity} severity
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h3 className="mb-3 font-semibold text-white">
+          Recommended Actions
+        </h3>
+
+        {dependencyAIResult.recommendations.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            No additional recommendations returned.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {dependencyAIResult.recommendations.map((item, index) => (
+              <div
+                key={index}
+                className="rounded-xl border border-slate-700 bg-slate-950 p-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="font-medium text-white">
+                    {item.title}
+                  </h4>
+                  <span className="text-xs uppercase text-violet-300">
+                    {item.priority} priority
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-slate-400">
+                  {item.description}
+                </p>
+                <p className="mt-2 text-sm text-emerald-300">
+                  Action: {item.action}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )}
 </section>
 
             <section className="rounded-xl border border-white/[0.08] bg-[#111419] p-5">

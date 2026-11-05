@@ -2,6 +2,9 @@ import express from "express";
 import cors from "cors";
 import "dotenv/config";
 import { analyzeSourceFile } from "./aiService.js";
+import { analyzeProjectArchitecture } from "./aiArchitectureService.js";
+import { explainCode } from "./aiExplainerService.js";
+import { analyzeDependencies } from "./aiDependencyService.js";
 import fg from "fast-glob";
 import path from "node:path";
 import { access, readFile, stat } from "node:fs/promises";
@@ -1467,7 +1470,122 @@ app.post("/api/ai/analyze", async (req, res) => {
     });
   }
 });
+// ==========================================
+// AI PROJECT ARCHITECTURE ANALYSIS
+// ==========================================
 
+app.post("/api/ai/architecture", async (req, res) => {
+  try {
+    const { projectData } = req.body as {
+      projectData?: unknown;
+    };
+
+    if (
+      !projectData ||
+      typeof projectData !== "object" ||
+      Array.isArray(projectData)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid project scan data is required",
+      });
+    }
+
+    const result = await analyzeProjectArchitecture(projectData);
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("AI architecture analysis failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Failed to analyze project architecture",
+    });
+  }
+});
+
+app.post("/api/ai/explain", async (req, res) => {
+  try {
+    const {
+      path: repoPath,
+      filePath,
+      symbolName,
+    } = req.body as {
+      path?: string;
+      filePath?: string;
+      symbolName?: string;
+    };
+
+    if (!repoPath || !filePath) {
+      return res.status(400).json({
+        success: false,
+        message: "Repository path and file path are required.",
+      });
+    }
+
+    const result = await explainCode(
+      repoPath,
+      filePath,
+      symbolName || ""
+    );
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("AI code explanation failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Failed to explain code.",
+    });
+  }
+});
+app.post("/api/ai/dependencies", async (req, res) => {
+  try {
+    const { projectData } = req.body as {
+      projectData?: unknown;
+    };
+
+    if (
+      !projectData ||
+      typeof projectData !== "object" ||
+      Array.isArray(projectData)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid project scan data is required.",
+      });
+    }
+
+    const result = await analyzeDependencies(projectData);
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("AI dependency analysis failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Failed to analyze dependencies.",
+    });
+  }
+});
 app.listen(PORT, () => {
   console.log(
     `Codebase X-Ray API running at http://localhost:${PORT}`

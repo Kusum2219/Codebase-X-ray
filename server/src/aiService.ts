@@ -1,3 +1,4 @@
+
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
@@ -64,6 +65,18 @@ async function fetchWithRetry(
       return response;
     }
 
+    // Do not repeatedly retry an exhausted daily quota.
+    if (response.status === 429) {
+      const errorText = await response.clone().text();
+
+      if (
+        errorText.toLowerCase().includes("per_day") ||
+        errorText.toLowerCase().includes("daily")
+      ) {
+        return response;
+      }
+    }
+
     const delay = 1000 * Math.pow(2, attempt);
 
     console.log(
@@ -90,7 +103,7 @@ function splitIntoChunks(sourceCode: string): CodeChunk[] {
   let startLine = 1;
 
   for (let index = 0; index < lines.length; index++) {
-    const line = lines[index];
+    const line = lines[index] ?? "";
 
     const exceedsLineLimit =
       currentLines.length >= MAX_CHUNK_LINES;
@@ -287,7 +300,7 @@ overallScore: integer from 0 to 100.
   const numberedCode = chunk.content
     .split("\n")
     .map((line, index) => {
-      return `${chunk.startLine + index}: ${line}`;
+      return `${chunk.startLine + index}: ${line ?? ""}`;
     })
     .join("\n");
 
@@ -358,6 +371,10 @@ function combineResults(
   results: AIAnalysisResult[],
   totalLines: number
 ): AIAnalysisResult {
+  if (results.length === 0) {
+    throw new Error("No AI analysis results were generated");
+  }
+
   const totalScore = results.reduce(
     (sum, result) => sum + result.overallScore,
     0
@@ -400,8 +417,10 @@ function combineResults(
         return severityDifference;
       }
 
-      return (a.line ?? totalLines + 1) -
-        (b.line ?? totalLines + 1);
+      return (
+        (a.line ?? totalLines + 1) -
+        (b.line ?? totalLines + 1)
+      );
     }
   );
 
@@ -489,13 +508,19 @@ export async function analyzeSourceFile(
   const results: AIAnalysisResult[] = [];
 
   for (let index = 0; index < chunks.length; index++) {
+    const chunk = chunks[index];
+
+    if (!chunk) {
+      continue;
+    }
+
     console.log(
       `Analyzing chunk ${index + 1}/${chunks.length}...`
     );
 
     const result = await analyzeChunk(
       relativePath,
-      chunks[index],
+      chunk,
       index,
       chunks.length,
       totalLines
